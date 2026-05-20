@@ -57,6 +57,24 @@ document.addEventListener("click", async (event) => {
 
   const action = button.dataset.action;
   if (action === "export-data") exportActivePanelExcel();
+  if (action === "dashboard-filter") {
+    const filterKey   = button.dataset.filterKey;
+    const filterValue = button.dataset.filterValue;
+    const statusValue = button.dataset.statusValue || "";
+    // Reset all filters first
+    state.filters.search    = "";
+    state.filters.status    = statusValue;
+    state.filters.situation = "";
+    state.filters.type      = "";
+    // Apply the specific filter for this card
+    if (filterKey === "search")    state.filters.search    = filterValue;
+    if (filterKey === "situation") state.filters.situation = filterValue;
+    if (filterKey === "status")    state.filters.status    = filterValue;
+    if (filterKey === "type")      state.filters.type      = filterValue;
+    state.currentView = "breakdowns";
+    saveState();
+    render();
+  }
   if (action === "select-breakdown") {
     state.selectedId = button.dataset.id;
     state.currentView = "meeting";
@@ -584,9 +602,12 @@ function renderDashboard() {
           </div>
         </div>
         <div class="dashboard-grid">
-          ${renderDashboardCard("Paradas a aguardar", management.stoppedWaiting, "Parado sem entrada em oficina")}
-          ${renderDashboardCard("Paradas em oficina", management.stoppedInWorkshop, "Parado com entrada em oficina")}
-          ${renderDashboardCard("Oficina externa", management.externalWorkshop, "Avarias abertas em oficina externa")}
+          ${renderDashboardCard("Paradas a aguardar", management.stoppedWaiting, "Parado sem entrada em oficina",
+            {"filter-key": "situation", "filter-value": "Aguarda entrada na oficina", "status-value": "Parado"})}
+          ${renderDashboardCard("Paradas em oficina", management.stoppedInWorkshop, "Parado com entrada em oficina",
+            {"filter-key": "status", "filter-value": "Parado", "status-value": "Parado"})}
+          ${renderDashboardCard("Oficina externa", management.externalWorkshop, "Avarias abertas em oficina externa",
+            {"filter-key": "search", "filter-value": "Externa", "status-value": ""})}
           ${renderDashboardCard("Tempo médio interna", formatDaysMetric(management.avgInternalResolution), "Entrada em oficina até conclusão")}
           ${renderDashboardCard("Tempo médio externa", formatDaysMetric(management.avgExternalResolution), "Entrada em oficina até conclusão")}
         </div>
@@ -616,11 +637,25 @@ function renderDashboard() {
   `;
 }
 
-function renderDashboardCard(label, value, detail) {
+function renderDashboardCard(label, value, detail, filterData) {
+  if (filterData) {
+    const attrs = Object.entries(filterData)
+      .map(([k, v]) => `data-${k}="${escapeAttr(v)}"`).join(" ");
+    return `
+      <button class="dashboard-card dashboard-card--clickable" type="button"
+        data-action="dashboard-filter" ${attrs}
+        title="Ver ${escapeAttr(label)}">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(String(value))}</strong>
+        <em>${escapeHtml(detail)}</em>
+        <span class="dashboard-card__cta">Ver avarias →</span>
+      </button>
+    `;
+  }
   return `
     <article class="dashboard-card">
       <span>${escapeHtml(label)}</span>
-      <strong>${escapeHtml(value)}</strong>
+      <strong>${escapeHtml(String(value))}</strong>
       <em>${escapeHtml(detail)}</em>
     </article>
   `;

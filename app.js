@@ -4,11 +4,11 @@ const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 const seed = window.AVARIAS_SEED || {};
 const remoteConfig = window.AVARIAS_REMOTE_CONFIG || {};
 const options = seed.options || {
-  types: ["Motor", "Transmissao", "Travoes", "Eletrica", "Suspensao", "Pneus", "Hidraulico", "Carroceria", "Climatizacao", "Outro"],
+  types: ["Motor", "Transmissao", "Travoes", "Eletrica", "Suspensao", "Pneus", "Hidraulico", "Carroceria", "Climatizacao", "Revisão", "Outro"],
   workshopTypes: ["Interna", "Externa"]
 };
 options.statuses = ["Parado", "Pode circular", "Agendado", "Concluido"];
-options.situations = ["Aguarda peças", "Aguarda entrada na oficina"];
+options.situations = ["Aguarda peças", "Aguarda entrada na oficina", "Em oficina"];
 
 const main = document.querySelector("#main");
 const toast = document.querySelector("#toast");

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Gestão de Avarias</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M14.7 6.3a4.2 4.2 0 0 0-5 5L4 17v3h3l5.7-5.7a4.2 4.2 0 0 0 5-5l-2.6 2.6-3-3 2.6-2.6Z"></path>
+          </svg>
+        </div>
+        <div class="title-block">
+          <p>Frota e oficina</p>
+          <h1>Gestão de avarias</h1>
+          <span id="data-line"></span>
+          <span id="sync-line"></span>
+        </div>
+        <div class="top-actions">
+          <button class="primary-button" type="button" data-action="export-data" title="Exportar painel em Excel">
+            <span data-icon="download"></span>
+            <span>Excel</span>
+          </button>
+        </div>
+      </header>
+
+      <nav class="view-tabs" aria-label="Vistas principais">
+        <button type="button" data-view="dashboard">Dashboard</button>
+        <button type="button" data-view="meeting">Reunião</button>
+        <button type="button" data-view="breakdowns">Avarias</button>
+        <button type="button" data-view="new">Nova avaria</button>
+        <button type="button" data-view="fleet">Frota</button>
+        <button type="button" data-view="audit">Rastreio</button>
+      </nav>
+
+      <main id="main" tabindex="-1"></main>
+    </div>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+
+    <script src="config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="seed-data.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

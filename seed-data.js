@@ -20,6 +20,7 @@ window.AVARIAS_SEED = {
       "Hidraulico",
       "Carroceria",
       "Climatizacao",
+      "Revisão",
       "Outro"
     ],
     "workshopTypes": [

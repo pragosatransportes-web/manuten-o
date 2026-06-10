@@ -1,4 +1,5 @@
 const STORAGE_KEY = "gestao-avarias-state-v1";
+let tollPreview = null; // { rows: [{plate, month, amount}], fileName } | null
 const ATTACHMENT_BUCKET = "avarias-anexos";
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 const seed = window.AVARIAS_SEED || {};
@@ -97,6 +98,13 @@ document.addEventListener("click", async (event) => {
   if (action === "delete-fleet") {
     await deleteFleetItem(button.dataset.equipment);
   }
+  if (action === "import-tolls") {
+    await handleTollsImport();
+  }
+  if (action === "clear-toll-preview") {
+    tollPreview = null;
+    render();
+  }
 });
 
 document.addEventListener("input", (event) => {
@@ -122,6 +130,23 @@ document.addEventListener("change", async (event) => {
   }
   if (target.id === "new-plate") {
     fillFleetMatchFromPlate(target.value, true);
+  }
+  if (target.dataset.tollFile) {
+    const file = target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const rows = parseTollsCSV(e.target.result);
+        if (!rows.length) { showToast("Nenhum registo válido encontrado no ficheiro."); return; }
+        tollPreview = { rows, fileName: file.name };
+        render();
+      } catch (err) {
+        console.error(err);
+        showToast("Erro ao ler o ficheiro CSV.");
+      }
+    };
+    reader.readAsText(file, "ISO-8859-1");
   }
 });
 
@@ -176,6 +201,7 @@ function makeInitialState() {
     breakdownsSort: "desc",
     sourceGeneratedAt: seed.generatedAt || "",
     fleet: seed.fleet || [],
+    custos: [],
     breakdowns,
     snapshots: seed.snapshots || [],
     audit: buildAudit(breakdowns),
@@ -297,16 +323,18 @@ function updateSyncStatus(label, className, ready) {
 }
 
 async function loadRemoteState() {
-  const [fleetResult, breakdownsResult, snapshotsResult, auditResult] = await Promise.all([
+  const [fleetResult, breakdownsResult, snapshotsResult, auditResult, custosResult] = await Promise.all([
     remoteClient.from("avarias_fleet").select("*").order("equipment", { ascending: true }),
     remoteClient.from("avarias_breakdowns").select("*").order("updated_at", { ascending: false }),
     remoteClient.from("avarias_snapshots").select("*").order("date", { ascending: true }),
-    remoteClient.from("avarias_audit_events").select("*").order("at", { ascending: false })
+    remoteClient.from("avarias_audit_events").select("*").order("at", { ascending: false }),
+    remoteClient.from("avarias_custos_portagens").select("*").order("month", { ascending: false })
   ]);
 
   [fleetResult, breakdownsResult, snapshotsResult, auditResult].forEach((result) => {
     if (result.error) throw result.error;
   });
+  // custos table may not exist yet — ignore error silently
 
   if (!fleetResult.data.length && !breakdownsResult.data.length) {
     await seedRemoteDatabase();
@@ -324,6 +352,7 @@ async function loadRemoteState() {
     currentView: previousView,
     selectedId: selectedExists ? previousSelectedId : (sortedBreakdowns(breakdowns.filter((item) => item.status !== "Concluido"))[0]?.id || breakdowns[0]?.id || ""),
     fleet: fleetResult.data.map(dbFleetToApp),
+    custos: custosResult.error ? [] : custosResult.data.map(dbCustoToApp),
     breakdowns,
     snapshots: snapshotsResult.data.map(dbSnapshotToApp),
     audit: auditResult.data.length ? auditResult.data.map(dbAuditToApp) : buildAudit(breakdowns),
@@ -364,6 +393,9 @@ function subscribeRemoteChanges() {
     .on("postgres_changes", { event: "*", schema: "public", table: "avarias_snapshots" }, (payload) => {
       applyRemoteRow(payload, "snapshots", dbSnapshotToApp);
     })
+    .on("postgres_changes", { event: "*", schema: "public", table: "avarias_custos_portagens" }, (payload) => {
+      applyRemoteRow(payload, "custos", dbCustoToApp);
+    })
     .subscribe();
 }
 
@@ -372,6 +404,7 @@ function applyRemoteRow(payload, collection, mapper) {
   if (!row) return;
   const item = mapper(row);
   const idField = collection === "snapshots" ? "date" : collection === "fleet" ? "equipment" : "id";
+  // custos use "id" — already handled by the default above
   const itemId = String(item[idField]);
   const index = state[collection].findIndex((existing) => String(existing[idField]) === itemId);
 
@@ -433,6 +466,230 @@ function formatRemoteError(error) {
   if (typeof error === "string") return error;
   return error.message || error.details || error.hint || error.code || "sem detalhe";
 }
+
+// --- CUSTOS / PORTAGENS ---
+
+function appCustoToDb(item) {
+  return {
+    id: item.id,
+    plate: item.plate,
+    month: item.month,
+    amount: item.amount,
+    source_file: item.sourceFile || null,
+    imported_at: item.importedAt || new Date().toISOString(),
+    imported_by: item.importedBy || remoteConfig.operator || "Utilizador"
+  };
+}
+
+function dbCustoToApp(row) {
+  return {
+    id: String(row.id),
+    plate: row.plate || "",
+    month: row.month || "",
+    amount: Number(row.amount) || 0,
+    sourceFile: row.source_file || "",
+    importedAt: row.imported_at || "",
+    importedBy: row.imported_by || ""
+  };
+}
+
+function parseTollsCSV(text) {
+  const lines = text.split(/\r?\n/);
+  // Primeira linha de dados = índice 8 (7 linhas de cabeçalho + 1 linha de colunas)
+  const dataLines = lines.slice(8);
+  const totals = {};
+  for (const line of dataLines) {
+    if (!line.trim()) continue;
+    const cols = line.split(";");
+    const plate = (cols[1] || "").trim();
+    if (!plate) continue;
+    // Data: preferir col D (índice 3), fallback col G (índice 6)
+    const rawDate = (cols[3] || cols[6] || "").trim();
+    if (!rawDate) continue;
+    const dateParts = rawDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!dateParts) continue;
+    const month = `${dateParts[3]}-${dateParts[2]}`; // YYYY-MM
+    // Valor: col J (índice 9), vírgula → ponto
+    const rawAmount = (cols[9] || "").trim().replace(",", ".");
+    const amount = parseFloat(rawAmount);
+    if (isNaN(amount) || amount <= 0) continue;
+    const key = `${plate}|${month}`;
+    totals[key] = (totals[key] || 0) + amount;
+  }
+  return Object.entries(totals)
+    .map(([key, amount]) => {
+      const [plate, month] = key.split("|");
+      return { plate, month, amount: Math.round(amount * 100) / 100 };
+    })
+    .sort((a, b) => a.month.localeCompare(b.month) || a.plate.localeCompare(b.plate));
+}
+
+function formatMonth(yyyyMM) {
+  if (!yyyyMM || !yyyyMM.includes("-")) return yyyyMM || "";
+  const [year, month] = yyyyMM.split("-");
+  const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+  return `${months[parseInt(month, 10) - 1] || month}/${year}`;
+}
+
+function renderTollPreview(preview) {
+  const total = preview.rows.reduce((s, r) => s + r.amount, 0);
+  return `
+    <div class="toll-preview">
+      <div class="panel-header">
+        <div>
+          <h3>Pré-visualização — ${escapeHtml(preview.fileName)}</h3>
+          <p>${preview.rows.length} matrículas · Total: <strong>${total.toFixed(2)} €</strong></p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Matrícula</th><th>Mês</th><th style="text-align:right">Total portagens (€)</th></tr>
+          </thead>
+          <tbody>
+            ${preview.rows.map((row) => `
+              <tr>
+                <td><strong>${escapeHtml(row.plate)}</strong></td>
+                <td>${escapeHtml(formatMonth(row.month))}</td>
+                <td style="text-align:right">${escapeHtml(row.amount.toFixed(2))} €</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+      <div class="form-actions">
+        <button class="primary-button" type="button" data-action="import-tolls">
+          <span data-icon="save"></span>
+          <span>Importar ${preview.rows.length} registos</span>
+        </button>
+        <button class="ghost-button" type="button" data-action="clear-toll-preview">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderCustos() {
+  const history = [...state.custos].sort((a, b) => b.month.localeCompare(a.month) || a.plate.localeCompare(b.plate));
+
+  // Totais por mês
+  const byMonth = Object.values(
+    state.custos.reduce((acc, item) => {
+      if (!acc[item.month]) acc[item.month] = { month: item.month, total: 0, count: 0 };
+      acc[item.month].total += item.amount;
+      acc[item.month].count++;
+      return acc;
+    }, {})
+  ).sort((a, b) => b.month.localeCompare(a.month));
+
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Custos</p>
+          <h2>Portagens — Via Verde</h2>
+          <p>Importação de relatórios mensais por viatura.</p>
+        </div>
+      </div>
+
+      <details class="fleet-add" ${tollPreview ? "open" : ""}>
+        <summary><span data-icon="plus"></span> Importar ficheiro CSV</summary>
+        <div class="data-form">
+          <div class="form-grid">
+            <label class="field">
+              <span>Ficheiro CSV Via Verde</span>
+              <input type="file" accept=".csv,.CSV" data-toll-file="1">
+            </label>
+          </div>
+          ${tollPreview ? renderTollPreview(tollPreview) : ""}
+        </div>
+      </details>
+
+      ${byMonth.length ? `
+        <div class="panel-header" style="margin-top:2rem">
+          <div><h3>Resumo por mês</h3></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Mês</th><th style="text-align:right">Total (€)</th><th>N.º registos</th></tr>
+            </thead>
+            <tbody>
+              ${byMonth.map((item) => `
+                <tr>
+                  <td><strong>${escapeHtml(formatMonth(item.month))}</strong></td>
+                  <td style="text-align:right">${escapeHtml(item.total.toFixed(2))} €</td>
+                  <td>${escapeHtml(String(item.count))}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-header" style="margin-top:2rem">
+          <div><h3>Detalhe por viatura</h3></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Mês</th><th>Matrícula</th><th style="text-align:right">Total (€)</th><th>Ficheiro</th><th>Importado em</th></tr>
+            </thead>
+            <tbody>
+              ${history.map((item) => `
+                <tr>
+                  <td>${escapeHtml(formatMonth(item.month))}</td>
+                  <td><strong>${escapeHtml(item.plate)}</strong></td>
+                  <td style="text-align:right">${escapeHtml(item.amount.toFixed(2))} €</td>
+                  <td class="compact-cell">${escapeHtml(item.sourceFile)}</td>
+                  <td>${escapeHtml(formatDate(item.importedAt?.slice(0, 10)))}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : '<p class="empty-state">Sem portagens importadas. Usa o botão acima para importar o primeiro relatório.</p>'}
+    </section>
+  `;
+}
+
+async function handleTollsImport() {
+  if (!tollPreview || !tollPreview.rows.length) return;
+  if (!remoteStatus.ready || !remoteClient) {
+    showToast("Sem ligação à base partilhada. Liga antes de importar.");
+    return;
+  }
+  const now = new Date().toISOString();
+  const rows = tollPreview.rows.map((row) => ({
+    id: `PORTAGEM-${row.plate}-${row.month}-${tollPreview.fileName}`,
+    plate: row.plate,
+    month: row.month,
+    amount: row.amount,
+    sourceFile: tollPreview.fileName,
+    importedAt: now,
+    importedBy: remoteConfig.operator || "Utilizador"
+  }));
+  try {
+    updateSyncStatus("A importar portagens", "syncing", true);
+    const { error } = await remoteClient
+      .from("avarias_custos_portagens")
+      .upsert(rows.map(appCustoToDb), { onConflict: "id" });
+    if (error) throw error;
+    for (const row of rows) {
+      const idx = state.custos.findIndex((c) => c.id === row.id);
+      if (idx >= 0) state.custos[idx] = row;
+      else state.custos.unshift(row);
+    }
+    tollPreview = null;
+    saveState();
+    updateSyncStatus("Partilhado em tempo real", "remote", true);
+    showToast(`${rows.length} registos importados.`);
+    render();
+  } catch (error) {
+    console.error(error);
+    updateSyncStatus(`Erro: ${formatRemoteError(error)}`, "error", false);
+    showToast("Erro ao importar portagens.");
+  }
+}
+
+// --- FIM CUSTOS ---
 
 function appFleetToDb(item) {
   return {
@@ -592,7 +849,8 @@ function render(focusSelector = "") {
     breakdowns: renderBreakdowns,
     new: renderNewBreakdown,
     fleet: renderFleet,
-    audit: renderAudit
+    audit: renderAudit,
+    custos: renderCustos
   };
   main.innerHTML = (views[state.currentView] || renderMeeting)();
   hydrateIcons();
@@ -1963,7 +2221,8 @@ function buildActivePanelWorkbook() {
     breakdowns: buildBreakdownsExport,
     new: buildMeetingExport,
     fleet: buildFleetExport,
-    audit: buildAuditExport
+    audit: buildAuditExport,
+    custos: buildCustosExport
   };
   return (builders[view] || buildBreakdownsExport)();
 }
@@ -2102,6 +2361,26 @@ function buildAuditExport() {
         ])
       }
     ]
+  };
+}
+
+function buildCustosExport() {
+  const sorted = [...state.custos].sort((a, b) => b.month.localeCompare(a.month) || a.plate.localeCompare(b.plate));
+  return {
+    title: "Portagens",
+    fileName: `portagens-${todayISO()}`,
+    tables: [{
+      title: "Portagens por viatura e mês",
+      columns: ["Mês", "Matrícula", "Total (€)", "Ficheiro", "Importado em", "Por"],
+      rows: sorted.map((item) => [
+        formatMonth(item.month),
+        item.plate,
+        item.amount.toFixed(2),
+        item.sourceFile,
+        formatDate(item.importedAt?.slice(0, 10)),
+        item.importedBy
+      ])
+    }]
   };
 }
 

@@ -58,22 +58,52 @@ async function ensureTrelloDirectory() {
   return trelloDirectoryPromise;
 }
 
-// As listas das viaturas seguem o padrão "003 B | C0815 | L-170277 | Marca | Tipo | Data".
-// A correspondência é feita pela matrícula e, em alternativa, pelo n.º de equipamento
-// (segmento tipo "C0815"/"T0865": letras opcionais + zeros à esquerda + número).
-function findTrelloVehicleList(boards, breakdown) {
-  const plate = normalizePlate(breakdown.plate);
-  const equipment = String(breakdown.equipment ?? "").trim();
+// Quadros de trabalho no Trello. A coluna "Empresa" da Frota decide o quadro:
+// CPSA -> Construções Pragosa, PTSA -> Pragosa Transportes.
+// Sem empresa preenchida, procura-se nos dois quadros.
+const TRELLO_WORK_BOARDS = ["Construções Pragosa", "Pragosa Transportes"];
+const TRELLO_BOARD_BY_COMPANY = {
+  CPSA: "Construções Pragosa",
+  PTSA: "Pragosa Transportes"
+};
 
-  for (const board of boards) {
-    for (const list of board.lists || []) {
-      if (plate && normalizePlate(list.name).includes(plate)) {
-        return { board, list };
-      }
-      if (equipment && listSegmentMatchesEquipment(list.name, equipment)) {
-        return { board, list };
-      }
-    }
+function trelloCompanyFor(breakdown) {
+  const fleet = (typeof state !== "undefined" && state.fleet) || [];
+  const plate = normalizePlate(breakdown.plate);
+  const fleetItem = fleet.find((item) =>
+    String(item.equipment) === String(breakdown.equipment) ||
+    (plate && normalizePlate(item.plate) === plate));
+  return fleetItem?.fleetCompany || "";
+}
+
+// As listas das viaturas seguem o padrão "003 B | C0815 | L-170277 | Marca | Tipo | Data".
+// A correspondência é feita pela matrícula (2.ª coluna da Frota) e, em alternativa,
+// pelo n.º de equipamento (1.ª coluna; segmento tipo "C0815"/"T0865").
+function findTrelloVehicleList(boards, breakdown) {
+  const workBoards = boards.filter((board) => TRELLO_WORK_BOARDS.includes(board.name));
+  const preferredName = TRELLO_BOARD_BY_COMPANY[trelloCompanyFor(breakdown)];
+  const ordered = preferredName
+    ? [...workBoards.filter((b) => b.name === preferredName), ...workBoards.filter((b) => b.name !== preferredName)]
+    : workBoards;
+
+  for (const board of ordered) {
+    const list = findListOnBoard(board, breakdown);
+    if (list) return { board, list };
+  }
+  return null;
+}
+
+function findListOnBoard(board, breakdown) {
+  const lists = board.lists || [];
+  const plate = normalizePlate(breakdown.plate);
+  if (plate) {
+    const byPlate = lists.find((list) => normalizePlate(list.name).includes(plate));
+    if (byPlate) return byPlate;
+  }
+  const equipment = String(breakdown.equipment ?? "").trim();
+  if (equipment) {
+    const byEquipment = lists.find((list) => listSegmentMatchesEquipment(list.name, equipment));
+    if (byEquipment) return byEquipment;
   }
   return null;
 }
@@ -141,16 +171,23 @@ async function upsertTrelloCard(target, breakdown, existingCard, note) {
 }
 
 async function syncBreakdownToTrello(breakdown, note) {
-  if (!trelloEnabled() || !breakdown) return;
+  if (!breakdown || !trelloSettings.key) return;
+  if (!trelloEnabled()) {
+    showToast("Trello inativo neste dispositivo — clique no botão Trello para ativar.");
+    return;
+  }
   try {
     const boards = await ensureTrelloDirectory();
     const target = findTrelloVehicleList(boards, breakdown);
     if (!target) {
-      showToast(`Trello: sem lista para equip. ${breakdown.equipment || "-"} (${breakdown.plate || "-"}).`);
+      showToast(`Trello: sem lista para equip. ${breakdown.equipment || "-"} (${breakdown.plate || "-"}) nos quadros de trabalho.`);
       return;
     }
     const existing = await findTrelloCardOnBoard(target.board.id, breakdown.id);
     await upsertTrelloCard(target, breakdown, existing, note || "");
+    showToast(existing
+      ? `Cartão Trello atualizado (${target.board.name}).`
+      : `Cartão criado no Trello: ${target.board.name}.`);
   } catch (error) {
     console.error(error);
     showToast("Sincronização com o Trello falhou.");

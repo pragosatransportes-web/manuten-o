@@ -28,7 +28,9 @@ const icons = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>',
   eye: '<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
   paperclip: '<svg viewBox="0 0 24 24"><path d="m21.4 11.6-8.5 8.5a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 1 1-2.8-2.8l8.5-8.5"></path></svg>',
-  x: '<svg viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>'
+  x: '<svg viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>',
+  trash: '<svg viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>',
+  sort: '<svg viewBox="0 0 24 24"><path d="m3 8 4-4 4 4"></path><path d="M7 4v16"></path><path d="m21 16-4 4-4-4"></path><path d="M17 20V4"></path></svg>'
 };
 
 let state = loadState();
@@ -84,6 +86,14 @@ document.addEventListener("click", async (event) => {
   if (action === "close-breakdown") {
     await closeBreakdown(button.dataset.id);
   }
+  if (action === "toggle-breakdown-sort") {
+    state.breakdownsSort = state.breakdownsSort === "desc" ? "asc" : "desc";
+    saveState();
+    render();
+  }
+  if (action === "delete-fleet") {
+    await deleteFleetItem(button.dataset.equipment);
+  }
 });
 
 document.addEventListener("input", (event) => {
@@ -122,6 +132,10 @@ document.addEventListener("submit", async (event) => {
     event.preventDefault();
     await handleNewBreakdown(form);
   }
+  if (form.dataset.form === "new-fleet") {
+    event.preventDefault();
+    await handleNewFleet(form);
+  }
 });
 
 function loadState() {
@@ -156,6 +170,7 @@ function makeInitialState() {
   return {
     currentView: "meeting",
     selectedId: selected?.id || "",
+    breakdownsSort: "desc",
     sourceGeneratedAt: seed.generatedAt || "",
     fleet: seed.fleet || [],
     breakdowns,
@@ -187,6 +202,10 @@ function normalizeBreakdownFields(item) {
     situation = "Aguarda peças";
   } else if (!options.statuses.includes(status)) {
     status = "Parado";
+  }
+
+  if (!situation && status !== "Concluido" && item.workshopEntryAt) {
+    situation = "Em oficina";
   }
 
   return {
@@ -602,10 +621,12 @@ function renderDashboard() {
           </div>
         </div>
         <div class="dashboard-grid">
-          ${renderDashboardCard("Paradas a aguardar", management.stoppedWaiting, "Parado sem entrada em oficina",
-            {"filter-key": "situation", "filter-value": "Aguarda entrada na oficina", "status-value": "Parado"})}
-          ${renderDashboardCard("Paradas em oficina", management.stoppedInWorkshop, "Parado com entrada em oficina",
-            {"filter-key": "status", "filter-value": "Parado", "status-value": "Parado"})}
+          ${renderDashboardCard("Aguarda oficina", management.waitingWorkshop, "Avarias abertas a aguardar entrada na oficina",
+            {"filter-key": "situation", "filter-value": "Aguarda entrada na oficina", "status-value": ""})}
+          ${renderDashboardCard("Em oficina", management.inWorkshop, "Avarias abertas com viatura em oficina",
+            {"filter-key": "situation", "filter-value": "Em oficina", "status-value": ""})}
+          ${renderDashboardCard("Aguarda peças", management.waitingParts, "Avarias abertas a aguardar peças",
+            {"filter-key": "situation", "filter-value": "Aguarda peças", "status-value": ""})}
           ${renderDashboardCard("Oficina externa", management.externalWorkshop, "Avarias abertas em oficina externa",
             {"filter-key": "search", "filter-value": "Externa", "status-value": ""})}
           ${renderDashboardCard("Tempo médio interna", formatDaysMetric(management.avgInternalResolution), "Entrada em oficina até conclusão")}
@@ -721,6 +742,11 @@ function renderMetrics(metrics) {
 
 function renderFilters(context) {
   const searchPlaceholder = context === "meeting" ? "Pesquisar equipamento, matrícula, oficina ou nota" : "Pesquisar avarias";
+  const sortButton = context === "breakdowns" ? `
+      <button class="ghost-button" type="button" data-action="toggle-breakdown-sort" title="Inverter ordenação por data de avaria">
+        <span data-icon="sort"></span>
+        <span>${state.breakdownsSort === "asc" ? "Mais antigas primeiro" : "Mais recentes primeiro"}</span>
+      </button>` : "";
   return `
     <div class="toolbar">
       <input type="search" data-filter="search" value="${escapeAttr(state.filters.search)}" placeholder="${searchPlaceholder}">
@@ -736,6 +762,7 @@ function renderFilters(context) {
         <option value="">Todos os tipos</option>
         ${options.types.map((type) => `<option value="${escapeAttr(type)}" ${state.filters.type === type ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
       </select>
+      ${sortButton}
     </div>
   `;
 }
@@ -818,9 +845,28 @@ function renderDetail(breakdown) {
           <span>Oficina</span>
           <input name="workshop" value="${escapeAttr(breakdown.workshop || "")}" placeholder="Oficina">
         </label>
+        <label class="field">
+          <span>Tipo</span>
+          <select name="type">
+            <option value="" ${!breakdown.type ? "selected" : ""}></option>
+            ${options.types.map((type) => `<option value="${escapeAttr(type)}" ${breakdown.type === type ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Motorista</span>
+          <input name="driver" value="${escapeAttr(breakdown.driver || "")}" placeholder="Motorista">
+        </label>
+        <label class="field full-span">
+          <span>Descrição</span>
+          <textarea name="description" placeholder="Descrição da avaria">${escapeHtml(breakdown.description || "")}</textarea>
+        </label>
         <label class="field full-span">
           <span>Nota</span>
           <textarea name="note" placeholder="Atualização para guardar no histórico"></textarea>
+        </label>
+        <label class="field file-field full-span">
+          <span>Adicionar ficheiros/fotografias</span>
+          <input type="file" name="attachments" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple>
         </label>
       </div>
       <div class="button-row">
@@ -856,7 +902,7 @@ function renderDetail(breakdown) {
 }
 
 function renderBreakdowns() {
-  const list = getFilteredBreakdowns(false);
+  const list = sortBreakdownsByDate(getFilteredBreakdowns(false), state.breakdownsSort);
   return `
     <section class="page-grid">
       <div class="panel">
@@ -1015,6 +1061,8 @@ function renderFleet() {
   }, {});
   const list = getFilteredFleet();
 
+  const fleetStatuses = seed.options?.fleetStatuses || ["Ativa", "Manutencao preventiva", "Vendida", "Abatida", "Cedida", "Inativa", "Alugada"];
+
   return `
     <section class="panel">
       <div class="panel-header">
@@ -1024,6 +1072,53 @@ function renderFleet() {
           <p>${list.length} registos encontrados</p>
         </div>
       </div>
+      <details class="fleet-add">
+        <summary><span data-icon="plus"></span> Adicionar viatura</summary>
+        <form class="data-form" data-form="new-fleet">
+          <div class="form-grid">
+            <label class="field">
+              <span>Equipamento</span>
+              <input name="equipment" required placeholder="N.º equipamento">
+            </label>
+            <label class="field">
+              <span>Matrícula</span>
+              <input name="plate" required placeholder="AA-00-AA">
+            </label>
+            <label class="field">
+              <span>Descrição</span>
+              <input name="description" required placeholder="Ex.: Camião basculante">
+            </label>
+            <label class="field">
+              <span>Marca</span>
+              <input name="brand">
+            </label>
+            <label class="field">
+              <span>Ano</span>
+              <input name="year" type="number" min="1980" max="2100">
+            </label>
+            <label class="field">
+              <span>Estado</span>
+              <select name="status">
+                ${fleetStatuses.map((status) => `<option value="${escapeAttr(status)}" ${status === "Ativa" ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}
+              </select>
+            </label>
+            <label class="field">
+              <span>Empresa</span>
+              <select name="fleetCompany">
+                <option value=""></option>
+                <option value="CPSA">CPSA</option>
+                <option value="PTSA">PTSA</option>
+              </select>
+            </label>
+          </div>
+          <div class="form-actions">
+            <button class="primary-button" type="submit">
+              <span data-icon="plus"></span>
+              <span>Criar viatura</span>
+            </button>
+          </div>
+        </form>
+      </details>
       <div class="toolbar">
         <input type="search" data-filter="fleetSearch" value="${escapeAttr(state.filters.fleetSearch)}" placeholder="Pesquisar equipamento, matrícula ou marca">
       </div>
@@ -1043,6 +1138,7 @@ function renderFleet() {
               <th>Aferição tacógrafo</th>
               <th>Revisão compressor</th>
               <th>Cubos de roda</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -1060,6 +1156,11 @@ function renderFleet() {
                 <td>${renderFleetDateCell(item, "tachographAt", "Data de aferição tacógrafo")}</td>
                 <td>${renderFleetDateCell(item, "compressorReviewAt", "Data de revisão compressor")}</td>
                 <td>${renderFleetDateCell(item, "wheelHubReviewAt", "Data de revisão cubos de roda")}</td>
+                <td>
+                  <button class="icon-button" type="button" data-action="delete-fleet" data-equipment="${escapeAttr(item.equipment)}" title="Remover viatura">
+                    <span data-icon="trash"></span>
+                  </button>
+                </td>
               </tr>
             `).join("")}
           </tbody>
@@ -1134,6 +1235,103 @@ async function updateFleetCompany(equipment, value) {
 }
 
 
+async function handleNewFleet(form) {
+  const data = new FormData(form);
+  const equipmentInput = String(data.get("equipment") || "").trim();
+  const plateInput = String(data.get("plate") || "").trim();
+  const equipment = normalizeEquipment(equipmentInput);
+
+  if (equipment === "") {
+    showToast("Indique o número de equipamento.");
+    return;
+  }
+  if (state.fleet.some((item) => String(item.equipment) === String(equipment))) {
+    showToast(`Já existe uma viatura com o equipamento ${equipment}.`);
+    return;
+  }
+  if (plateInput && state.fleet.some((item) => normalizePlate(item.plate) === normalizePlate(plateInput))) {
+    showToast(`Já existe uma viatura com a matrícula ${plateInput}.`);
+    return;
+  }
+
+  const yearValue = Number(data.get("year"));
+  const item = {
+    equipment,
+    plate: plateInput,
+    description: String(data.get("description") || "").trim(),
+    brand: String(data.get("brand") || "").trim(),
+    model: "",
+    year: Number.isFinite(yearValue) && yearValue > 0 ? yearValue : null,
+    status: String(data.get("status") || "Ativa"),
+    fleetEntryAt: todayISO(),
+    fleetExitAt: null,
+    exitReason: "",
+    notes: "",
+    fleetCompany: String(data.get("fleetCompany") || ""),
+    inspectionAt: null,
+    tachographAt: null,
+    compressorReviewAt: null,
+    wheelHubReviewAt: null
+  };
+
+  state.fleet.push(item);
+  state.fleet.sort((a, b) => String(a.equipment).localeCompare(String(b.equipment), undefined, { numeric: true }));
+  const auditEvent = {
+    id: `FROTA-${equipment}-criada-${Date.now()}`,
+    breakdownId: "",
+    equipment: item.equipment,
+    plate: item.plate,
+    at: new Date().toISOString(),
+    action: "Frota: viatura adicionada",
+    status: "",
+    note: `${item.plate || "-"} · ${item.description || "-"}`
+  };
+  state.audit.unshift(auditEvent);
+  saveState();
+  showToast("Viatura adicionada à frota.");
+  render();
+  await persistRemoteSafely(async () => {
+    await persistFleetRemote(item);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
+async function deleteFleetItem(equipment) {
+  const item = state.fleet.find((fleetItem) => String(fleetItem.equipment) === String(equipment));
+  if (!item) return;
+
+  const hasOpenBreakdowns = state.breakdowns.some((breakdown) =>
+    String(breakdown.equipment) === String(item.equipment) && breakdown.status !== "Concluido");
+  if (hasOpenBreakdowns) {
+    showToast("Não é possível remover: a viatura tem avarias abertas.");
+    return;
+  }
+  if (!window.confirm(`Remover a viatura equip. ${item.equipment} (${item.plate || "sem matrícula"}) da frota?`)) {
+    return;
+  }
+
+  state.fleet = state.fleet.filter((fleetItem) => fleetItem !== item);
+  const auditEvent = {
+    id: `FROTA-${item.equipment}-removida-${Date.now()}`,
+    breakdownId: "",
+    equipment: item.equipment,
+    plate: item.plate,
+    at: new Date().toISOString(),
+    action: "Frota: viatura removida",
+    status: "",
+    note: `${item.plate || "-"} · ${item.description || "-"}`
+  };
+  state.audit.unshift(auditEvent);
+  saveState();
+  showToast("Viatura removida da frota.");
+  render();
+  await persistRemoteSafely(async () => {
+    const { error } = await remoteClient.from("avarias_fleet").delete().eq("equipment", String(item.equipment));
+    if (error) throw error;
+    await persistAuditRemote(auditEvent);
+  });
+}
+
 function renderAudit() {
   const audit = getFilteredAudit();
   const maxActive = Math.max(1, ...state.snapshots.map((item) => item.active || 0));
@@ -1193,17 +1391,41 @@ async function handleQuickUpdate(form, intent) {
   const note = String(data.get("note") || "").trim();
   let auditEvent = null;
 
+  let newAttachments = [];
+  const files = form.elements.attachments?.files;
+  if (files && files.length) {
+    try {
+      newAttachments = await uploadBreakdownAttachments(breakdown.id, files);
+    } catch (error) {
+      console.error(error);
+      updateSyncStatus(`Falhou anexo: ${formatRemoteError(error)}`, "error", remoteStatus.ready);
+      showToast(`Não foi possível guardar o anexo: ${formatRemoteError(error)}`);
+      return;
+    }
+  }
+
   breakdown.status = finalStatus;
   breakdown.situation = finalStatus === "Concluido" ? "" : String(data.get("situation") || "").trim();
   breakdown.expectedExitAt = emptyToNull(data.get("expectedExitAt"));
   breakdown.workshopEntryAt = emptyToNull(data.get("workshopEntryAt"));
   breakdown.workshop = String(data.get("workshop") || "").trim();
+  breakdown.type = String(data.get("type") || breakdown.type || "").trim();
+  breakdown.driver = String(data.get("driver") || "").trim();
+  breakdown.description = String(data.get("description") || "").trim();
+
+  if (newAttachments.length) {
+    breakdown.attachments = [...normalizeAttachments(breakdown.attachments), ...newAttachments];
+  }
 
   const changes = summarizeChanges(previous, breakdown);
+  if (newAttachments.length) {
+    changes.push(`anexos adicionados: ${formatAttachmentNames(newAttachments)}`);
+  }
   if (note || changes.length || intent === "close" || intent === "reopen") {
     const finalNote = note || (intent === "close" ? "Concluido" : intent === "reopen" ? "Ocorrência reaberta" : changes.join("; "));
-    appendHistory(breakdown, finalStatus, finalNote, todayISO());
-    auditEvent = logAudit(breakdown, intent === "close" ? "Concluída" : intent === "reopen" ? "Reaberta" : "Atualização", finalNote);
+    const historyNote = note && changes.length ? `${note} (${changes.join("; ")})` : finalNote;
+    appendHistory(breakdown, finalStatus, historyNote, todayISO());
+    auditEvent = logAudit(breakdown, intent === "close" ? "Concluída" : intent === "reopen" ? "Reaberta" : "Atualização", historyNote);
   }
 
   saveState();
@@ -1395,10 +1617,10 @@ function getMetrics() {
 
 function getManagementMetrics() {
   const active = state.breakdowns.filter((item) => item.status !== "Concluido");
-  const stopped = active.filter((item) => item.status === "Parado");
   return {
-    stoppedWaiting: stopped.filter((item) => item.situation === "Aguarda entrada na oficina" || !item.workshopEntryAt).length,
-    stoppedInWorkshop: stopped.filter((item) => item.workshopEntryAt && item.situation !== "Aguarda entrada na oficina").length,
+    waitingWorkshop: active.filter((item) => item.situation === "Aguarda entrada na oficina").length,
+    inWorkshop: active.filter((item) => item.situation === "Em oficina").length,
+    waitingParts: active.filter((item) => item.situation === "Aguarda peças").length,
     externalWorkshop: active.filter((item) => normalizeText(item.workshopType) === "externa").length,
     avgInternalResolution: averageResolutionDays("Interna"),
     avgExternalResolution: averageResolutionDays("Externa")
@@ -1507,6 +1729,20 @@ function getFilteredAudit() {
   return state.audit.filter((item) => {
     const haystack = normalizeText(`${item.breakdownId} ${item.equipment} ${item.plate} ${item.action} ${item.note}`);
     return !search || haystack.includes(search);
+  });
+}
+
+function sortBreakdownsByDate(list, direction) {
+  const factor = direction === "asc" ? 1 : -1;
+  return [...list].sort((a, b) => {
+    const dateA = a.reportedAt || "";
+    const dateB = b.reportedAt || "";
+    if (dateA !== dateB) {
+      if (!dateA) return 1;
+      if (!dateB) return -1;
+      return dateA < dateB ? -factor : factor;
+    }
+    return String(a.id) < String(b.id) ? -factor : factor;
   });
 }
 
@@ -1629,7 +1865,16 @@ function summarizeChanges(previous, next) {
   if ((previous.expectedExitAt || "") !== (next.expectedExitAt || "")) changes.push(`prev. saída: ${formatDate(previous.expectedExitAt)} > ${formatDate(next.expectedExitAt)}`);
   if ((previous.workshopEntryAt || "") !== (next.workshopEntryAt || "")) changes.push(`entrada oficina: ${formatDate(previous.workshopEntryAt)} > ${formatDate(next.workshopEntryAt)}`);
   if ((previous.workshop || "") !== (next.workshop || "")) changes.push(`oficina: ${previous.workshop || "-"} > ${next.workshop || "-"}`);
+  if ((previous.type || "") !== (next.type || "")) changes.push(`tipo: ${previous.type || "-"} > ${next.type || "-"}`);
+  if ((previous.driver || "") !== (next.driver || "")) changes.push(`motorista: ${previous.driver || "-"} > ${next.driver || "-"}`);
+  if ((previous.description || "") !== (next.description || "")) changes.push(`descrição: ${truncateForHistory(previous.description)} > ${truncateForHistory(next.description)}`);
   return changes;
+}
+
+function truncateForHistory(value) {
+  const clean = String(value || "").trim();
+  if (!clean) return "-";
+  return clean.length > 80 ? `${clean.slice(0, 77)}...` : clean;
 }
 
 function fillFleetMatchFromPlate(value, commitPlate) {
@@ -1657,6 +1902,30 @@ function setFilter(name, value) {
 
 function exportActivePanelExcel() {
   const workbook = buildActivePanelWorkbook();
+
+  if (window.XLSX) {
+    const xlsxWorkbook = XLSX.utils.book_new();
+    const usedNames = new Set();
+    workbook.tables.forEach((table, index) => {
+      const rows = [table.columns, ...table.rows.map((row) => row.map((cell) => cell ?? ""))];
+      const sheet = XLSX.utils.aoa_to_sheet(rows);
+      sheet["!cols"] = table.columns.map((column, columnIndex) => {
+        const longest = Math.max(
+          String(column).length,
+          ...table.rows.map((row) => String(row[columnIndex] ?? "").length)
+        );
+        return { wch: Math.min(50, longest + 2) };
+      });
+      let name = sanitizeSheetName(table.title || `Folha${index + 1}`);
+      while (usedNames.has(name)) name = sanitizeSheetName(`${name.slice(0, 28)}_${index + 1}`);
+      usedNames.add(name);
+      XLSX.utils.book_append_sheet(xlsxWorkbook, sheet, name);
+    });
+    XLSX.writeFile(xlsxWorkbook, `${workbook.fileName}.xlsx`);
+    showToast("Excel preparado.");
+    return;
+  }
+
   const html = buildExcelHtml(workbook);
   const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -1666,6 +1935,10 @@ function exportActivePanelExcel() {
   anchor.click();
   URL.revokeObjectURL(url);
   showToast("Excel preparado.");
+}
+
+function sanitizeSheetName(name) {
+  return String(name).replace(/[\\\/\?\*\[\]:]/g, " ").trim().slice(0, 31) || "Folha";
 }
 
 function buildActivePanelWorkbook() {
@@ -1691,8 +1964,9 @@ function buildDashboardExport() {
         title: "Indicadores de gestão",
         columns: ["Indicador", "Valor", "Descrição"],
         rows: [
-          ["Paradas a aguardar", management.stoppedWaiting, "Parado sem entrada em oficina"],
-          ["Paradas em oficina", management.stoppedInWorkshop, "Parado com entrada em oficina"],
+          ["Aguarda oficina", management.waitingWorkshop, "Avarias abertas a aguardar entrada na oficina"],
+          ["Em oficina", management.inWorkshop, "Avarias abertas com viatura em oficina"],
+          ["Aguarda peças", management.waitingParts, "Avarias abertas a aguardar peças"],
           ["Oficina externa", management.externalWorkshop, "Avarias abertas em oficina externa"],
           ["Tempo médio interna", formatDaysMetric(management.avgInternalResolution), "Entrada em oficina até conclusão"],
           ["Tempo médio externa", formatDaysMetric(management.avgExternalResolution), "Entrada em oficina até conclusão"]
@@ -1726,7 +2000,7 @@ function buildBreakdownsExport() {
   return {
     title: "Avarias",
     fileName: `avarias-${todayISO()}`,
-    tables: [buildBreakdownsTable("Avarias", getFilteredBreakdowns(false))]
+    tables: [buildBreakdownsTable("Avarias", sortBreakdownsByDate(getFilteredBreakdowns(false), state.breakdownsSort))]
   };
 }
 

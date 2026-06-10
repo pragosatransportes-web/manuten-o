@@ -867,3 +867,37 @@ td strong { font-weight: 600; font-size: 14px; }
 .dashboard-card--clickable strong {
   font-size: 30px;
 }
+
+/* -- Adicionar viatura (Frota) ------------------------------- */
+.fleet-add {
+  margin: 0 16px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+.fleet-add summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.fleet-add summary::-webkit-details-marker { display: none; }
+
+.fleet-add summary [data-icon] svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.fleet-add[open] summary { border-bottom: 1px solid var(--line); }
+
+.fleet-add .data-form { padding: 14px; }

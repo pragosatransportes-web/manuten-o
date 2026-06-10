@@ -59,6 +59,9 @@ document.addEventListener("click", async (event) => {
 
   const action = button.dataset.action;
   if (action === "export-data") exportActivePanelExcel();
+  if (action === "sync-trello" && typeof syncAllBreakdownsToTrello === "function") {
+    await syncAllBreakdownsToTrello();
+  }
   if (action === "dashboard-filter") {
     const filterKey   = button.dataset.filterKey;
     const filterValue = button.dataset.filterValue;
@@ -1421,16 +1424,21 @@ async function handleQuickUpdate(form, intent) {
   if (newAttachments.length) {
     changes.push(`anexos adicionados: ${formatAttachmentNames(newAttachments)}`);
   }
+  let trelloNote = "";
   if (note || changes.length || intent === "close" || intent === "reopen") {
     const finalNote = note || (intent === "close" ? "Concluido" : intent === "reopen" ? "Ocorrência reaberta" : changes.join("; "));
     const historyNote = note && changes.length ? `${note} (${changes.join("; ")})` : finalNote;
     appendHistory(breakdown, finalStatus, historyNote, todayISO());
     auditEvent = logAudit(breakdown, intent === "close" ? "Concluída" : intent === "reopen" ? "Reaberta" : "Atualização", historyNote);
+    trelloNote = historyNote;
   }
 
   saveState();
   showToast(intent === "close" ? "Avaria concluída." : intent === "reopen" ? "Ocorrência reaberta." : "Atualização guardada.");
   render();
+  if (typeof syncBreakdownToTrello === "function" && trelloNote) {
+    syncBreakdownToTrello(breakdown, trelloNote);
+  }
   await persistRemoteSafely(async () => {
     await persistBreakdownRemote(breakdown);
     await persistAuditRemote(auditEvent);
@@ -1535,6 +1543,9 @@ async function handleNewBreakdown(form) {
   saveState();
   showToast("Nova avaria criada.");
   render();
+  if (typeof syncBreakdownToTrello === "function") {
+    syncBreakdownToTrello(breakdown, "");
+  }
   await persistRemoteSafely(async () => {
     await persistBreakdownRemote(breakdown);
     await persistAuditRemote(auditEvent);
@@ -1550,6 +1561,9 @@ async function closeBreakdown(id) {
   saveState();
   showToast("Avaria concluída.");
   render();
+  if (typeof syncBreakdownToTrello === "function") {
+    syncBreakdownToTrello(breakdown, "Concluído pela lista");
+  }
   await persistRemoteSafely(async () => {
     await persistBreakdownRemote(breakdown);
     await persistAuditRemote(auditEvent);

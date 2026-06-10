@@ -21,6 +21,10 @@
           <span id="sync-line"></span>
         </div>
         <div class="top-actions">
+          <button class="ghost-button" type="button" data-action="sync-trello" id="trello-sync-button" hidden title="Sincronizar avarias abertas com o Trello">
+            <span data-icon="rotate"></span>
+            <span>Trello</span>
+          </button>
           <button class="primary-button" type="button" data-action="export-data" title="Exportar painel em Excel">
             <span data-icon="download"></span>
             <span>Excel</span>
@@ -47,5 +51,6 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="seed-data.js"></script>
     <script src="app.js"></script>
+    <script src="trello.js"></script>
   </body>
 </html>

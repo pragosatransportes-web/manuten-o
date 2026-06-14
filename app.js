@@ -220,6 +220,7 @@ function makeInitialState() {
       status: "",
       situation: "",
       type: "",
+      company: "",
       fleetSearch: "",
       auditSearch: ""
     }
@@ -1032,6 +1033,10 @@ function renderFilters(context) {
       <select data-filter="type" aria-label="Tipo">
         <option value="">Todos os tipos</option>
         ${options.types.map((type) => `<option value="${escapeAttr(type)}" ${state.filters.type === type ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
+      </select>
+      <select data-filter="company" aria-label="Empresa">
+        <option value="">Todas as empresas</option>
+        ${["CPSA", "PTSA"].map((company) => `<option value="${escapeAttr(company)}" ${state.filters.company === company ? "selected" : ""}>${escapeHtml(company)}</option>`).join("")}
       </select>
       ${sortButton}
     </div>
@@ -2005,6 +2010,7 @@ function getFilteredBreakdowns(activeOnly) {
   if (state.filters.status) list = list.filter((item) => item.status === state.filters.status);
   if (state.filters.situation) list = list.filter((item) => item.situation === state.filters.situation);
   if (state.filters.type) list = list.filter((item) => item.type === state.filters.type);
+  if (state.filters.company) list = list.filter((item) => getBreakdownCompany(item) === state.filters.company);
   if (search) {
     list = list.filter((item) => {
       const haystack = normalizeText(`${item.id} ${item.equipment} ${item.plate} ${item.type} ${item.status} ${item.situation} ${item.workshop} ${item.description} ${item.lastNote} ${formatAttachmentNames(item.attachments)}`);

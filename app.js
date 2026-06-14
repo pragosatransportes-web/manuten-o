@@ -2,6 +2,10 @@ const STORAGE_KEY = "gestao-avarias-state-v1";
 let tollPreview = null; // { rows: [{plate, month, amount}], fileName } | null
 const ATTACHMENT_BUCKET = "avarias-anexos";
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+// Data sentinela para representar "N/A" nos campos de data da frota.
+// As colunas são do tipo `date` na base de dados, por isso usamos uma data válida
+// (e impossível na prática) em vez do texto "N/A", para a sincronização funcionar.
+const FLEET_NA_DATE = "9999-12-31";
 const seed = window.AVARIAS_SEED || {};
 const remoteConfig = window.AVARIAS_REMOTE_CONFIG || {};
 const options = seed.options || {
@@ -97,6 +101,12 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "delete-fleet") {
     await deleteFleetItem(button.dataset.equipment);
+  }
+  if (action === "fleet-date-na") {
+    await updateFleetDate(button.dataset.equipment, button.dataset.field, FLEET_NA_DATE);
+  }
+  if (action === "fleet-date-reset") {
+    await updateFleetDate(button.dataset.equipment, button.dataset.field, "");
   }
   if (action === "import-tolls") {
     await handleTollsImport();
@@ -1162,6 +1172,14 @@ function renderDetail(breakdown) {
   `;
 }
 
+function getBreakdownCompany(breakdown) {
+  const plate = normalizePlate(breakdown.plate);
+  const fleetItem = state.fleet.find((item) =>
+    String(item.equipment) === String(breakdown.equipment) ||
+    (plate && normalizePlate(item.plate) === plate));
+  return fleetItem?.fleetCompany || "";
+}
+
 function renderBreakdowns() {
   const list = sortBreakdownsByDate(getFilteredBreakdowns(false), state.breakdownsSort);
   return `
@@ -1181,6 +1199,7 @@ function renderBreakdowns() {
               <tr>
                 <th>Equip.</th>
                 <th>Matrícula</th>
+                  <th>Empresa</th>
                   <th>Tipo</th>
                   <th>Estado</th>
                   <th>Situação</th>
@@ -1196,6 +1215,7 @@ function renderBreakdowns() {
                 <tr>
                   <td><strong>${escapeHtml(item.equipment || "-")}</strong></td>
                   <td>${escapeHtml(item.plate || "-")}</td>
+                  <td>${escapeHtml(getBreakdownCompany(item) || "-")}</td>
                   <td>${escapeHtml(item.type || "-")}</td>
                   <td>${statusBadge(item.status)}</td>
                   <td>${escapeHtml(item.situation || "-")}</td>
@@ -1432,8 +1452,17 @@ function renderFleet() {
 }
 
 function renderFleetDateCell(item, field, label) {
-  if (!isFleetDateApplicable(item, field)) {
-    return '<span class="not-applicable">N/A</span>';
+  const value = item[field] || "";
+
+  if (isFleetNA(value)) {
+    return `
+      <div class="fleet-date-cell fleet-date-cell--na">
+        <span class="not-applicable">N/A</span>
+        <button class="link-button" type="button" data-action="fleet-date-reset"
+          data-equipment="${escapeAttr(item.equipment)}" data-field="${escapeAttr(field)}"
+          title="Tornar o campo editável novamente">repor</button>
+      </div>
+    `;
   }
 
   return `
@@ -1441,13 +1470,22 @@ function renderFleetDateCell(item, field, label) {
       <input
         type="date"
         aria-label="${escapeAttr(`${label} equip. ${item.equipment}`)}"
-        value="${escapeAttr(item[field] || "")}"
+        value="${escapeAttr(value)}"
         data-equipment="${escapeAttr(item.equipment)}"
         data-fleet-date="${escapeAttr(field)}"
       >
-      ${renderDueBadge(item[field])}
+      <div class="fleet-date-cell__foot">
+        ${renderDueBadge(value)}
+        <button class="link-button" type="button" data-action="fleet-date-na"
+          data-equipment="${escapeAttr(item.equipment)}" data-field="${escapeAttr(field)}"
+          title="Marcar como não aplicável">N/A</button>
+      </div>
     </div>
   `;
+}
+
+function isFleetNA(value) {
+  return value === FLEET_NA_DATE;
 }
 
 function renderFleetCompanyCell(item) {
@@ -1467,17 +1505,21 @@ function renderDueBadge(dateValue) {
 
 async function updateFleetDate(equipment, field, value) {
   const item = state.fleet.find((fleetItem) => String(fleetItem.equipment) === String(equipment));
-  if (!item || !isFleetDateApplicable(item, field)) return;
+  if (!item) return;
   const previous = item[field] || "";
-  item[field] = emptyToNull(value);
-  const auditEvent = logFleetAudit(item, field, previous, item[field] || "");
+  item[field] = value === FLEET_NA_DATE ? FLEET_NA_DATE : emptyToNull(value);
+  const auditEvent = logFleetAudit(item, field, fleetDateLabel(previous), fleetDateLabel(item[field] || ""));
   saveState();
-  showToast("Data da frota guardada.");
+  showToast(value === FLEET_NA_DATE ? "Campo marcado como N/A." : "Data da frota guardada.");
   render();
   await persistRemoteSafely(async () => {
     await persistFleetRemote(item);
     await persistAuditRemote(auditEvent);
   });
+}
+
+function fleetDateLabel(value) {
+  return isFleetNA(value) ? "N/A" : (value || "");
 }
 
 async function updateFleetCompany(equipment, value) {
@@ -1930,7 +1972,7 @@ function getFleetDateAlerts() {
 
   return state.fleet
     .flatMap((item) => fields
-      .filter(([field]) => item[field] && isFleetDateApplicable(item, field))
+      .filter(([field]) => item[field] && !isFleetNA(item[field]))
       .map(([field, label]) => ({
         equipment: item.equipment,
         plate: item.plate,
@@ -1941,24 +1983,8 @@ function getFleetDateAlerts() {
     .sort((a, b) => a.days - b.days);
 }
 
-function isFleetDateApplicable(item, field) {
-  if (field === "inspectionAt") return true;
-  const isTruck = isTruckEquipment(item);
-  if (field === "tachographAt" || field === "wheelHubReviewAt") return isTruck;
-  if (field === "compressorReviewAt") return isPlainTruck(item);
-  return false;
-}
-
-function isTruckEquipment(item) {
-  return normalizeText(item.description).includes("camiao");
-}
-
-function isPlainTruck(item) {
-  const description = normalizeText(item.description);
-  return description.includes("camiao") && !description.includes("rigido") && !description.includes("grua");
-}
-
 function getDueState(dateValue) {
+  if (isFleetNA(dateValue)) return { className: "empty", label: "N/A" };
   if (!dateValue) return { className: "empty", label: "Sem data" };
   const days = daysUntil(dateValue);
   if (!Number.isFinite(days)) return { className: "empty", label: "Sem data" };
@@ -2315,14 +2341,14 @@ function buildFleetExport() {
           item.status || "",
           item.fleetCompany || "",
           activeCounts[item.equipment] || 0,
-          item.inspectionAt || "",
-          formatDueForExport(item.inspectionAt, item, "inspectionAt"),
-          isFleetDateApplicable(item, "tachographAt") ? item.tachographAt || "" : "N/A",
-          isFleetDateApplicable(item, "tachographAt") ? formatDueForExport(item.tachographAt, item, "tachographAt") : "N/A",
-          isFleetDateApplicable(item, "compressorReviewAt") ? item.compressorReviewAt || "" : "N/A",
-          isFleetDateApplicable(item, "compressorReviewAt") ? formatDueForExport(item.compressorReviewAt, item, "compressorReviewAt") : "N/A",
-          isFleetDateApplicable(item, "wheelHubReviewAt") ? item.wheelHubReviewAt || "" : "N/A",
-          isFleetDateApplicable(item, "wheelHubReviewAt") ? formatDueForExport(item.wheelHubReviewAt, item, "wheelHubReviewAt") : "N/A"
+          fleetDateForExport(item.inspectionAt),
+          formatDueForExport(item.inspectionAt),
+          fleetDateForExport(item.tachographAt),
+          formatDueForExport(item.tachographAt),
+          fleetDateForExport(item.compressorReviewAt),
+          formatDueForExport(item.compressorReviewAt),
+          fleetDateForExport(item.wheelHubReviewAt),
+          formatDueForExport(item.wheelHubReviewAt)
         ])
       }
     ]
@@ -2387,11 +2413,12 @@ function buildCustosExport() {
 function buildBreakdownsTable(title, list) {
   return {
     title,
-    columns: ["ID", "Equipamento", "Matrícula", "Tipo", "Estado", "Situação", "Anexos", "Links anexos", "Data avaria", "Entrada oficina", "Prev. saída", "Tipo oficina", "Oficina", "Motorista", "Custo", "Descrição", "Última nota", "Data nota"],
+    columns: ["ID", "Equipamento", "Matrícula", "Empresa", "Tipo", "Estado", "Situação", "Anexos", "Links anexos", "Data avaria", "Entrada oficina", "Prev. saída", "Tipo oficina", "Oficina", "Motorista", "Custo", "Descrição", "Última nota", "Data nota"],
     rows: list.map((item) => [
       item.id,
       item.equipment || "",
       item.plate || "",
+      getBreakdownCompany(item) || "",
       item.type || "",
       item.status || "",
       item.situation || "",
@@ -2445,8 +2472,13 @@ function buildExcelHtml(workbook) {
     </html>`;
 }
 
-function formatDueForExport(dateValue, item, field) {
-  if (!isFleetDateApplicable(item, field)) return "N/A";
+function fleetDateForExport(value) {
+  if (isFleetNA(value)) return "N/A";
+  return value || "";
+}
+
+function formatDueForExport(dateValue) {
+  if (isFleetNA(dateValue)) return "N/A";
   if (!dateValue) return "Sem data";
   return getDueState(dateValue).label;
 }

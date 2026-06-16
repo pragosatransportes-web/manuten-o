@@ -22,7 +22,7 @@ const VISTORIA_SECTIONS = [
 ];
 
 const VISTORIA_TYPES = ["Trator/Camião", "Semi-reboque Basculante", "Porta-Máquinas", "Estrados", "Semi-reboque Caixa", "Cisterna", "Outro"];
-const VISTORIA_STATES = ["OK", "OBS", "CRÍTICO"];
+const VISTORIA_STATES = ["OK", "SOB OBS", "CRÍTICO"];
 const seed = window.AVARIAS_SEED || {};
 const remoteConfig = window.AVARIAS_REMOTE_CONFIG || {};
 const options = seed.options || {
@@ -526,7 +526,7 @@ function buildVistoriaItems(type) {
 function scoreVistoria(items) {
   let penalty = 0, ok = 0, obs = 0, crit = 0;
   for (const it of items || []) {
-    if (it.state === "OBS") { penalty += 1; obs += 1; }
+    if (it.state === "SOB OBS") { penalty += 1; obs += 1; }
     else if (it.state === "CRÍTICO") { penalty += 3; crit += 1; }
     else { ok += 1; }
   }
@@ -775,7 +775,7 @@ function vistoriaResultBadge(result) {
 }
 
 function vistoriaStateBadge(stt) {
-  const cls = stt === "CRÍTICO" ? "reprovado" : stt === "OBS" ? "observacoes" : "aprovado";
+  const cls = stt === "CRÍTICO" ? "reprovado" : stt === "SOB OBS" ? "observacoes" : "aprovado";
   return `<span class="badge vistoria-${cls}">${escapeHtml(stt)}</span>`;
 }
 

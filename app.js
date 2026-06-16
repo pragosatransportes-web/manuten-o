@@ -5,6 +5,24 @@ const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 // As colunas são do tipo `date` na base de dados, por isso usamos uma data válida
 // (e impossível na prática) em vez do texto "N/A", para a sincronização funcionar.
 const FLEET_NA_DATE = "9999-12-31";
+
+// Checklist de vistoria baseado no modelo "checklist_vistoria_frota.xlsx".
+// Secções sem `types` aplicam-se a todos os equipamentos; com `types` só aos tipos indicados.
+// (Definidas aqui no topo porque render() é chamado no arranque e pode renderizar a Vistoria.)
+const VISTORIA_SECTIONS = [
+  { name: "1. Verificação Geral", items: ["Estado geral de limpeza", "Danos visíveis na estrutura/chassis", "Corrosão ou fissuras", "Matrículas legíveis e fixas", "Guarda-lamas e proteções"] },
+  { name: "2. Pneus e Rodas", items: ["Desgaste irregular", "Danos/cortes/bolhas", "Pressão aparente", "Estado das jantes"] },
+  { name: "3. Sinalização", items: ["Refletores e sinalização"] },
+  { name: "4. Fugas e Componentes", items: ["Tubagens e mangueiras", "Cablagens visíveis"] },
+  { name: "5. Segurança e Cabina", types: ["Trator/Camião"], items: ["Para-brisas e espelhos", "Escovas limpa-vidros", "Buzina", "Cinto de segurança", "Extintor válido", "Colete refletor / triângulo"] },
+  { name: "6. Trator", types: ["Trator/Camião"], items: ["Estado da roda suplente", "Sistema de bloqueio", "Degraus e pega-mãos"] },
+  { name: "7. Semi-reboque Basculante", types: ["Semi-reboque Basculante"], items: ["Estado da caixa", "Fissuras estruturais", "Fechos porta traseira", "Lona/cobertura", "Articulações e pivôs"] },
+  { name: "8. Porta-Máquinas", types: ["Porta-Máquinas"], items: ["Estrutura geral", "Estado das rampas", "Pontos de amarração", "Piso antiderrapante", "Estado do piso"] },
+  { name: "9. Estrados", types: ["Estrados"], items: ["Estado do piso", "Estrutura geral", "Pontos de amarração", "Laterais/rebordos", "Estado do chassis"] }
+];
+
+const VISTORIA_TYPES = ["Trator/Camião", "Semi-reboque Basculante", "Porta-Máquinas", "Estrados", "Semi-reboque Caixa", "Cisterna", "Outro"];
+const VISTORIA_STATES = ["OK", "OBS", "CRÍTICO"];
 const seed = window.AVARIAS_SEED || {};
 const remoteConfig = window.AVARIAS_REMOTE_CONFIG || {};
 const options = seed.options || {
@@ -496,24 +514,7 @@ function formatRemoteError(error) {
   return error.message || error.details || error.hint || error.code || "sem detalhe";
 }
 
-// --- VISTORIA ---
-
-// Checklist baseado no modelo "checklist_vistoria_frota.xlsx".
-// Secções sem `types` aplicam-se a todos os equipamentos; com `types` só ao tipo indicado.
-const VISTORIA_SECTIONS = [
-  { name: "1. Verificação Geral", items: ["Estado geral de limpeza", "Danos visíveis na estrutura/chassis", "Corrosão ou fissuras", "Matrículas legíveis e fixas", "Guarda-lamas e proteções"] },
-  { name: "2. Pneus e Rodas", items: ["Desgaste irregular", "Danos/cortes/bolhas", "Pressão aparente", "Estado das jantes"] },
-  { name: "3. Sinalização", items: ["Refletores e sinalização"] },
-  { name: "4. Fugas e Componentes", items: ["Tubagens e mangueiras", "Cablagens visíveis"] },
-  { name: "5. Segurança e Cabina", items: ["Para-brisas e espelhos", "Escovas limpa-vidros", "Buzina", "Cinto de segurança", "Extintor válido", "Colete refletor / triângulo"] },
-  { name: "6. Trator", types: ["Trator/Camião"], items: ["Estado da roda suplente", "Sistema de bloqueio", "Degraus e pega-mãos"] },
-  { name: "7. Semi-reboque Basculante", types: ["Semi-reboque Basculante"], items: ["Estado da caixa", "Fissuras estruturais", "Fechos porta traseira", "Lona/cobertura", "Articulações e pivôs"] },
-  { name: "8. Porta-Máquinas", types: ["Porta-Máquinas"], items: ["Estrutura geral", "Estado das rampas", "Pontos de amarração", "Piso antiderrapante", "Estado do piso"] },
-  { name: "9. Estrados", types: ["Estrados"], items: ["Estado do piso", "Estrutura geral", "Pontos de amarração", "Laterais/rebordos", "Estado do chassis"] }
-];
-
-const VISTORIA_TYPES = ["Trator/Camião", "Semi-reboque Basculante", "Porta-Máquinas", "Estrados", "Semi-reboque Caixa", "Cisterna", "Outro"];
-const VISTORIA_STATES = ["OK", "OBS", "CRÍTICO"];
+// --- VISTORIA (constantes do checklist no topo do ficheiro) ---
 
 function vistoriaSectionsForType(type) {
   return VISTORIA_SECTIONS.filter((section) => !section.types || section.types.includes(type));

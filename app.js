@@ -56,8 +56,6 @@ const icons = {
 };
 
 let state = loadState();
-render();
-initRemote();
 
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
@@ -1112,7 +1110,14 @@ function render(focusSelector = "") {
     vistoria: renderVistoria,
     audit: renderAudit
   };
-  main.innerHTML = (views[state.currentView] || renderMeeting)();
+  let html;
+  try {
+    html = (views[state.currentView] || renderMeeting)();
+  } catch (error) {
+    console.error("Erro ao renderizar a vista", state.currentView, error);
+    html = `<section class="panel"><div class="panel-header"><div><p class="eyebrow">Erro</p><h2>Não foi possível mostrar esta vista</h2><p>Escolha outra vista no menu acima. Detalhe técnico: ${escapeHtml(String((error && error.message) || error))}</p></div></div></section>`;
+  }
+  main.innerHTML = html;
   hydrateIcons();
 
   if (focusSelector) {
@@ -2880,3 +2885,19 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value);
 }
+
+// Arranque no fim do ficheiro: garante que todos os listeners já estão registados
+// antes do primeiro render, para que um erro de renderização nunca deixe a app
+// sem interação (ecrã em branco e botões mortos).
+function bootstrap() {
+  try {
+    render();
+  } catch (error) {
+    console.error("Falha no arranque, a recuperar para a vista de reunião:", error);
+    state.currentView = "meeting";
+    try { saveState(); render(); } catch (e2) { console.error(e2); }
+  }
+  initRemote();
+}
+
+bootstrap();

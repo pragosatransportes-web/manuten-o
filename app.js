@@ -1,5 +1,4 @@
 const STORAGE_KEY = "gestao-avarias-state-v1";
-let tollPreview = null; // { rows: [{plate, month, amount}], fileName } | null
 const ATTACHMENT_BUCKET = "avarias-anexos";
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 // Data sentinela para representar "N/A" nos campos de data da frota.
@@ -108,12 +107,19 @@ document.addEventListener("click", async (event) => {
   if (action === "fleet-date-reset") {
     await updateFleetDate(button.dataset.equipment, button.dataset.field, "");
   }
-  if (action === "import-tolls") {
-    await handleTollsImport();
-  }
-  if (action === "clear-toll-preview") {
-    tollPreview = null;
+  if (action === "vistoria-subview") {
+    state.vistoriaSubView = button.dataset.subview;
+    saveState();
     render();
+  }
+  if (action === "select-vistoria") {
+    state.selectedVistoriaId = button.dataset.id;
+    state.vistoriaSubView = "detail";
+    saveState();
+    render();
+  }
+  if (action === "delete-vistoria") {
+    await deleteVistoria(button.dataset.id);
   }
 });
 
@@ -141,22 +147,11 @@ document.addEventListener("change", async (event) => {
   if (target.id === "new-plate") {
     fillFleetMatchFromPlate(target.value, true);
   }
-  if (target.dataset.tollFile) {
-    const file = target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const rows = parseTollsCSV(e.target.result);
-        if (!rows.length) { showToast("Nenhum registo válido encontrado no ficheiro."); return; }
-        tollPreview = { rows, fileName: file.name };
-        render();
-      } catch (err) {
-        console.error(err);
-        showToast("Erro ao ler o ficheiro CSV.");
-      }
-    };
-    reader.readAsText(file, "ISO-8859-1");
+  if (target.id === "vistoria-plate") {
+    fillVistoriaFromPlate(target.value);
+  }
+  if (target.id === "vistoria-type") {
+    applyVistoriaTypeVisibility(target.value);
   }
 });
 
@@ -173,6 +168,10 @@ document.addEventListener("submit", async (event) => {
   if (form.dataset.form === "new-fleet") {
     event.preventDefault();
     await handleNewFleet(form);
+  }
+  if (form.dataset.form === "new-vistoria") {
+    event.preventDefault();
+    await handleNewVistoria(form);
   }
 });
 
@@ -209,9 +208,11 @@ function makeInitialState() {
     currentView: "meeting",
     selectedId: selected?.id || "",
     breakdownsSort: "desc",
+    vistoriaSubView: "kpis",
+    selectedVistoriaId: "",
     sourceGeneratedAt: seed.generatedAt || "",
     fleet: seed.fleet || [],
-    custos: [],
+    vistorias: [],
     breakdowns,
     snapshots: seed.snapshots || [],
     audit: buildAudit(breakdowns),
@@ -222,7 +223,9 @@ function makeInitialState() {
       type: "",
       company: "",
       fleetSearch: "",
-      auditSearch: ""
+      auditSearch: "",
+      vistoriaType: "",
+      vistoriaResult: ""
     }
   };
 }
@@ -334,18 +337,18 @@ function updateSyncStatus(label, className, ready) {
 }
 
 async function loadRemoteState() {
-  const [fleetResult, breakdownsResult, snapshotsResult, auditResult, custosResult] = await Promise.all([
+  const [fleetResult, breakdownsResult, snapshotsResult, auditResult, vistoriasResult] = await Promise.all([
     remoteClient.from("avarias_fleet").select("*").order("equipment", { ascending: true }),
     remoteClient.from("avarias_breakdowns").select("*").order("updated_at", { ascending: false }),
     remoteClient.from("avarias_snapshots").select("*").order("date", { ascending: true }),
     remoteClient.from("avarias_audit_events").select("*").order("at", { ascending: false }),
-    remoteClient.from("avarias_custos_portagens").select("*").order("month", { ascending: false })
+    remoteClient.from("avarias_vistorias").select("*").order("date", { ascending: false })
   ]);
 
   [fleetResult, breakdownsResult, snapshotsResult, auditResult].forEach((result) => {
     if (result.error) throw result.error;
   });
-  // custos table may not exist yet — ignore error silently
+  // a tabela de vistorias pode ainda não existir — ignora o erro silenciosamente
 
   if (!fleetResult.data.length && !breakdownsResult.data.length) {
     await seedRemoteDatabase();
@@ -363,7 +366,7 @@ async function loadRemoteState() {
     currentView: previousView,
     selectedId: selectedExists ? previousSelectedId : (sortedBreakdowns(breakdowns.filter((item) => item.status !== "Concluido"))[0]?.id || breakdowns[0]?.id || ""),
     fleet: fleetResult.data.map(dbFleetToApp),
-    custos: custosResult.error ? [] : custosResult.data.map(dbCustoToApp),
+    vistorias: vistoriasResult.error ? (state.vistorias || []) : vistoriasResult.data.map(dbVistoriaToApp),
     breakdowns,
     snapshots: snapshotsResult.data.map(dbSnapshotToApp),
     audit: auditResult.data.length ? auditResult.data.map(dbAuditToApp) : buildAudit(breakdowns),
@@ -404,8 +407,8 @@ function subscribeRemoteChanges() {
     .on("postgres_changes", { event: "*", schema: "public", table: "avarias_snapshots" }, (payload) => {
       applyRemoteRow(payload, "snapshots", dbSnapshotToApp);
     })
-    .on("postgres_changes", { event: "*", schema: "public", table: "avarias_custos_portagens" }, (payload) => {
-      applyRemoteRow(payload, "custos", dbCustoToApp);
+    .on("postgres_changes", { event: "*", schema: "public", table: "avarias_vistorias" }, (payload) => {
+      applyRemoteRow(payload, "vistorias", dbVistoriaToApp);
     })
     .subscribe();
 }
@@ -415,7 +418,6 @@ function applyRemoteRow(payload, collection, mapper) {
   if (!row) return;
   const item = mapper(row);
   const idField = collection === "snapshots" ? "date" : collection === "fleet" ? "equipment" : "id";
-  // custos use "id" — already handled by the default above
   const itemId = String(item[idField]);
   const index = state[collection].findIndex((existing) => String(existing[idField]) === itemId);
 
@@ -461,6 +463,22 @@ async function persistFleetRemote(fleetItem) {
   updateSyncStatus("Partilhado em tempo real", "remote", true);
 }
 
+async function persistVistoriaRemote(vistoria) {
+  if (!remoteStatus.ready || !remoteClient || !vistoria) return;
+  updateSyncStatus("A guardar vistoria", "syncing", true);
+  const { error } = await remoteClient
+    .from("avarias_vistorias")
+    .upsert(appVistoriaToDb(vistoria), { onConflict: "id" });
+  if (error) throw error;
+  updateSyncStatus("Partilhado em tempo real", "remote", true);
+}
+
+async function deleteVistoriaRemote(id) {
+  if (!remoteStatus.ready || !remoteClient) return;
+  const { error } = await remoteClient.from("avarias_vistorias").delete().eq("id", String(id));
+  if (error) throw error;
+}
+
 async function persistRemoteSafely(work) {
   if (!remoteStatus.ready || !remoteClient) return;
   try {
@@ -478,229 +496,459 @@ function formatRemoteError(error) {
   return error.message || error.details || error.hint || error.code || "sem detalhe";
 }
 
-// --- CUSTOS / PORTAGENS ---
+// --- VISTORIA ---
 
-function appCustoToDb(item) {
+// Checklist baseado no modelo "checklist_vistoria_frota.xlsx".
+// Secções sem `types` aplicam-se a todos os equipamentos; com `types` só ao tipo indicado.
+const VISTORIA_SECTIONS = [
+  { name: "1. Verificação Geral", items: ["Estado geral de limpeza", "Danos visíveis na estrutura/chassis", "Corrosão ou fissuras", "Matrículas legíveis e fixas", "Guarda-lamas e proteções"] },
+  { name: "2. Pneus e Rodas", items: ["Desgaste irregular", "Danos/cortes/bolhas", "Pressão aparente", "Estado das jantes"] },
+  { name: "3. Sinalização", items: ["Refletores e sinalização"] },
+  { name: "4. Fugas e Componentes", items: ["Tubagens e mangueiras", "Cablagens visíveis"] },
+  { name: "5. Segurança e Cabina", items: ["Para-brisas e espelhos", "Escovas limpa-vidros", "Buzina", "Cinto de segurança", "Extintor válido", "Colete refletor / triângulo"] },
+  { name: "6. Trator", types: ["Trator/Camião"], items: ["Estado da roda suplente", "Sistema de bloqueio", "Degraus e pega-mãos"] },
+  { name: "7. Semi-reboque Basculante", types: ["Semi-reboque Basculante"], items: ["Estado da caixa", "Fissuras estruturais", "Fechos porta traseira", "Lona/cobertura", "Articulações e pivôs"] },
+  { name: "8. Porta-Máquinas", types: ["Porta-Máquinas"], items: ["Estrutura geral", "Estado das rampas", "Pontos de amarração", "Piso antiderrapante", "Estado do piso"] },
+  { name: "9. Estrados", types: ["Estrados"], items: ["Estado do piso", "Estrutura geral", "Pontos de amarração", "Laterais/rebordos", "Estado do chassis"] }
+];
+
+const VISTORIA_TYPES = ["Trator/Camião", "Semi-reboque Basculante", "Porta-Máquinas", "Estrados", "Semi-reboque Caixa", "Cisterna", "Outro"];
+const VISTORIA_STATES = ["OK", "OBS", "CRÍTICO"];
+
+function vistoriaSectionsForType(type) {
+  return VISTORIA_SECTIONS.filter((section) => !section.types || section.types.includes(type));
+}
+
+function buildVistoriaItems(type) {
+  return vistoriaSectionsForType(type).flatMap((section) =>
+    section.items.map((item) => ({ section: section.name, item, state: "OK", note: "" })));
+}
+
+function scoreVistoria(items) {
+  let penalty = 0, ok = 0, obs = 0, crit = 0;
+  for (const it of items || []) {
+    if (it.state === "OBS") { penalty += 1; obs += 1; }
+    else if (it.state === "CRÍTICO") { penalty += 3; crit += 1; }
+    else { ok += 1; }
+  }
+  return { penalty, ok, obs, crit, total: (items || []).length };
+}
+
+function vistoriaResult(items) {
+  const { crit, obs } = scoreVistoria(items);
+  if (crit > 0) return "REPROVADO";
+  if (obs > 0) return "APROVADO C/ OBSERVAÇÕES";
+  return "APROVADO";
+}
+
+function appVistoriaToDb(item) {
   return {
-    id: item.id,
-    plate: item.plate,
-    month: item.month,
-    amount: item.amount,
-    source_file: item.sourceFile || null,
-    imported_at: item.importedAt || new Date().toISOString(),
-    imported_by: item.importedBy || remoteConfig.operator || "Utilizador"
+    id: String(item.id),
+    date: item.date || null,
+    time: item.time || null,
+    company: item.company || null,
+    location: item.location || null,
+    inspector: item.inspector || null,
+    driver: item.driver || null,
+    plate: item.plate || null,
+    equipment: String(item.equipment ?? ""),
+    equipment_type: item.equipmentType || null,
+    items: item.items || [],
+    score: item.score || 0,
+    result: item.result || null,
+    created_at: item.createdAt || new Date().toISOString(),
+    created_by: item.createdBy || remoteConfig.operator || "Utilizador"
   };
 }
 
-function dbCustoToApp(row) {
+function dbVistoriaToApp(row) {
+  let items = row.items;
+  if (typeof items === "string") {
+    try { items = JSON.parse(items); } catch { items = []; }
+  }
   return {
     id: String(row.id),
+    date: row.date || "",
+    time: row.time || "",
+    company: row.company || "",
+    location: row.location || "",
+    inspector: row.inspector || "",
+    driver: row.driver || "",
     plate: row.plate || "",
-    month: row.month || "",
-    amount: Number(row.amount) || 0,
-    sourceFile: row.source_file || "",
-    importedAt: row.imported_at || "",
-    importedBy: row.imported_by || ""
+    equipment: (row.equipment ?? "") === "" ? "" : normalizeEquipment(row.equipment),
+    equipmentType: row.equipment_type || "",
+    items: Array.isArray(items) ? items : [],
+    score: Number(row.score) || 0,
+    result: row.result || "",
+    createdAt: row.created_at || "",
+    createdBy: row.created_by || ""
   };
 }
 
-function parseTollsCSV(text) {
-  const lines = text.split(/\r?\n/);
-  // Primeira linha de dados = índice 8 (7 linhas de cabeçalho + 1 linha de colunas)
-  const dataLines = lines.slice(8);
-  const totals = {};
-  for (const line of dataLines) {
-    if (!line.trim()) continue;
-    const cols = line.split(";");
-    const plate = (cols[1] || "").trim();
-    if (!plate) continue;
-    // Data: preferir col D (índice 3), fallback col G (índice 6)
-    const rawDate = (cols[3] || cols[6] || "").trim();
-    if (!rawDate) continue;
-    const dateParts = rawDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (!dateParts) continue;
-    const month = `${dateParts[3]}-${dateParts[2]}`; // YYYY-MM
-    // Valor: col J (índice 9), vírgula → ponto
-    const rawAmount = (cols[9] || "").trim().replace(",", ".");
-    const amount = parseFloat(rawAmount);
-    if (isNaN(amount) || amount <= 0) continue;
-    const key = `${plate}|${month}`;
-    totals[key] = (totals[key] || 0) + amount;
+// --- Vistoria: filtros, inferência e UI ---
+
+function getFilteredVistorias() {
+  let list = [...(state.vistorias || [])];
+  if (state.filters.vistoriaType) list = list.filter((v) => v.equipmentType === state.filters.vistoriaType);
+  if (state.filters.vistoriaResult) list = list.filter((v) => v.result === state.filters.vistoriaResult);
+  return list.sort((a, b) =>
+    (b.date || "").localeCompare(a.date || "") ||
+    (b.time || "").localeCompare(a.time || "") ||
+    (b.createdAt || "").localeCompare(a.createdAt || ""));
+}
+
+function inferVistoriaType(description) {
+  const d = normalizeText(description);
+  if (d.includes("porta") && d.includes("maquina")) return "Porta-Máquinas";
+  if (d.includes("basculante")) return "Semi-reboque Basculante";
+  if (d.includes("estrado")) return "Estrados";
+  if (d.includes("cisterna")) return "Cisterna";
+  if (d.includes("caixa") || d.includes("reboque")) return "Semi-reboque Caixa";
+  if (d.includes("camiao")) return "Trator/Camião";
+  return "Outro";
+}
+
+function fillVistoriaFromPlate(value) {
+  const match = findFleetByPlate(value);
+  const equipment = document.querySelector("#vistoria-equipment");
+  const typeSelect = document.querySelector("#vistoria-type");
+  if (equipment) equipment.value = match?.equipment ?? "";
+  if (match && typeSelect) {
+    const inferred = inferVistoriaType(match.description);
+    typeSelect.value = inferred;
+    applyVistoriaTypeVisibility(inferred);
   }
-  return Object.entries(totals)
-    .map(([key, amount]) => {
-      const [plate, month] = key.split("|");
-      return { plate, month, amount: Math.round(amount * 100) / 100 };
-    })
-    .sort((a, b) => a.month.localeCompare(b.month) || a.plate.localeCompare(b.plate));
 }
 
-function formatMonth(yyyyMM) {
-  if (!yyyyMM || !yyyyMM.includes("-")) return yyyyMM || "";
-  const [year, month] = yyyyMM.split("-");
-  const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-  return `${months[parseInt(month, 10) - 1] || month}/${year}`;
+function applyVistoriaTypeVisibility(type) {
+  document.querySelectorAll("[data-section-types]").forEach((el) => {
+    const types = el.getAttribute("data-section-types").split("|");
+    el.style.display = types.includes(type) ? "" : "none";
+  });
 }
 
-function renderTollPreview(preview) {
-  const total = preview.rows.reduce((s, r) => s + r.amount, 0);
+function renderVistoria() {
+  const sub = state.vistoriaSubView || "kpis";
+  const tabs = [["kpis", "KPIs"], ["list", "Vistorias"], ["new", "Nova vistoria"]];
+  const subnav = `
+    <nav class="subview-tabs" aria-label="Vistas de vistoria">
+      ${tabs.map(([k, label]) => `<button type="button" class="${sub === k ? "active" : ""}" data-action="vistoria-subview" data-subview="${k}">${label}</button>`).join("")}
+    </nav>`;
+  let body;
+  if (sub === "new") body = renderVistoriaForm();
+  else if (sub === "list") body = renderVistoriaList();
+  else if (sub === "detail") body = renderVistoriaDetail();
+  else body = renderVistoriaKpis();
+  return `<section class="vistoria-view">${subnav}${body}</section>`;
+}
+
+function renderVistoriaTypeFilter() {
   return `
-    <div class="toll-preview">
+    <div class="toolbar">
+      <select data-filter="vistoriaType" aria-label="Tipo de equipamento">
+        <option value="">Todos os tipos de equipamento</option>
+        ${VISTORIA_TYPES.map((t) => `<option value="${escapeAttr(t)}" ${state.filters.vistoriaType === t ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}
+      </select>
+      <select data-filter="vistoriaResult" aria-label="Resultado">
+        <option value="">Todos os resultados</option>
+        ${["APROVADO", "APROVADO C/ OBSERVAÇÕES", "REPROVADO"].map((r) => `<option value="${escapeAttr(r)}" ${state.filters.vistoriaResult === r ? "selected" : ""}>${escapeHtml(r)}</option>`).join("")}
+      </select>
+    </div>`;
+}
+
+function renderVistoriaList() {
+  const list = getFilteredVistorias();
+  return `
+    <div class="panel">
       <div class="panel-header">
-        <div>
-          <h3>Pré-visualização — ${escapeHtml(preview.fileName)}</h3>
-          <p>${preview.rows.length} matrículas · Total: <strong>${total.toFixed(2)} €</strong></p>
-        </div>
+        <div><p class="eyebrow">Registos</p><h2>Vistorias</h2><p>${list.length} vistorias</p></div>
+        <button class="ghost-button" type="button" data-action="vistoria-subview" data-subview="new"><span data-icon="plus"></span><span>Nova</span></button>
       </div>
+      ${renderVistoriaTypeFilter()}
       <div class="table-wrap">
         <table>
-          <thead>
-            <tr><th>Matrícula</th><th>Mês</th><th style="text-align:right">Total portagens (€)</th></tr>
-          </thead>
+          <thead><tr><th>Data</th><th>Equip.</th><th>Matrícula</th><th>Empresa</th><th>Tipo</th><th>Inspetor</th><th>Resultado</th><th>Anomalias</th><th></th></tr></thead>
           <tbody>
-            ${preview.rows.map((row) => `
-              <tr>
-                <td><strong>${escapeHtml(row.plate)}</strong></td>
-                <td>${escapeHtml(formatMonth(row.month))}</td>
-                <td style="text-align:right">${escapeHtml(row.amount.toFixed(2))} €</td>
-              </tr>
-            `).join("")}
+            ${list.length ? list.map((v) => {
+              const s = scoreVistoria(v.items);
+              return `<tr>
+                <td>${formatDate(v.date)}${v.time ? ` ${escapeHtml(v.time)}` : ""}</td>
+                <td><strong>${escapeHtml(String(v.equipment || "-"))}</strong></td>
+                <td>${escapeHtml(v.plate || "-")}</td>
+                <td>${escapeHtml(v.company || "-")}</td>
+                <td>${escapeHtml(v.equipmentType || "-")}</td>
+                <td>${escapeHtml(v.inspector || "-")}</td>
+                <td>${vistoriaResultBadge(v.result)}</td>
+                <td>${s.obs + s.crit > 0 ? `${s.obs} obs · ${s.crit} crít.` : "—"}</td>
+                <td><div class="button-row">
+                  <button class="icon-button" type="button" data-action="select-vistoria" data-id="${escapeAttr(v.id)}" title="Ver"><span data-icon="eye"></span></button>
+                  <button class="icon-button" type="button" data-action="delete-vistoria" data-id="${escapeAttr(v.id)}" title="Eliminar"><span data-icon="trash"></span></button>
+                </div></td>
+              </tr>`;
+            }).join("") : `<tr><td colspan="9"><p class="empty-state">Sem vistorias para estes filtros.</p></td></tr>`}
           </tbody>
         </table>
       </div>
-      <div class="form-actions">
-        <button class="primary-button" type="button" data-action="import-tolls">
-          <span data-icon="save"></span>
-          <span>Importar ${preview.rows.length} registos</span>
-        </button>
-        <button class="ghost-button" type="button" data-action="clear-toll-preview">Cancelar</button>
-      </div>
-    </div>
-  `;
+    </div>`;
 }
 
-function renderCustos() {
-  const history = [...state.custos].sort((a, b) => b.month.localeCompare(a.month) || a.plate.localeCompare(b.plate));
-
-  // Totais por mês
-  const byMonth = Object.values(
-    state.custos.reduce((acc, item) => {
-      if (!acc[item.month]) acc[item.month] = { month: item.month, total: 0, count: 0 };
-      acc[item.month].total += item.amount;
-      acc[item.month].count++;
-      return acc;
-    }, {})
-  ).sort((a, b) => b.month.localeCompare(a.month));
-
+function renderVistoriaForm() {
+  const today = todayISO();
+  const now = new Date();
+  const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const defaultType = VISTORIA_TYPES[0];
+  const plates = state.fleet.filter((i) => i.plate);
   return `
-    <section class="panel">
-      <div class="panel-header">
-        <div>
-          <p class="eyebrow">Custos</p>
-          <h2>Portagens — Via Verde</h2>
-          <p>Importação de relatórios mensais por viatura.</p>
+    <section class="panel form-panel">
+      <div class="panel-header"><div><p class="eyebrow">Inspeção visual</p><h2>Nova vistoria</h2><p>Registo de inspeção visual à viatura, em dia aleatório.</p></div></div>
+      <form class="data-form" data-form="new-vistoria">
+        <div class="form-grid">
+          <label class="field"><span>Data</span><input type="date" name="date" value="${today}" required></label>
+          <label class="field"><span>Hora</span><input type="time" name="time" value="${hhmm}"></label>
+          <label class="field"><span>Matrícula</span><input id="vistoria-plate" name="plate" list="vistoria-plate-options" autocomplete="off" required></label>
+          <label class="field"><span>Equipamento</span><input id="vistoria-equipment" name="equipment" placeholder="Preenchido pela matrícula" readonly></label>
+          <label class="field"><span>Empresa</span><select name="company"><option value=""></option><option value="CPSA">CPSA</option><option value="PTSA">PTSA</option></select></label>
+          <label class="field"><span>Tipo de equipamento</span><select id="vistoria-type" name="equipmentType">${VISTORIA_TYPES.map((t) => `<option value="${escapeAttr(t)}" ${t === defaultType ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}</select></label>
+          <label class="field"><span>Inspetor</span><input name="inspector"></label>
+          <label class="field"><span>Motorista</span><input name="driver"></label>
+          <label class="field"><span>Local</span><input name="location"></label>
         </div>
-      </div>
-
-      <details class="fleet-add" ${tollPreview ? "open" : ""}>
-        <summary><span data-icon="plus"></span> Importar ficheiro CSV</summary>
-        <div class="data-form">
-          <div class="form-grid">
-            <label class="field">
-              <span>Ficheiro CSV Via Verde</span>
-              <input type="file" accept=".csv,.CSV" data-toll-file="1">
-            </label>
-          </div>
-          ${tollPreview ? renderTollPreview(tollPreview) : ""}
-        </div>
-      </details>
-
-      ${byMonth.length ? `
-        <div class="panel-header" style="margin-top:2rem">
-          <div><h3>Resumo por mês</h3></div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Mês</th><th style="text-align:right">Total (€)</th><th>N.º registos</th></tr>
-            </thead>
-            <tbody>
-              ${byMonth.map((item) => `
-                <tr>
-                  <td><strong>${escapeHtml(formatMonth(item.month))}</strong></td>
-                  <td style="text-align:right">${escapeHtml(item.total.toFixed(2))} €</td>
-                  <td>${escapeHtml(String(item.count))}</td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
-        </div>
-        <div class="panel-header" style="margin-top:2rem">
-          <div><h3>Detalhe por viatura</h3></div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Mês</th><th>Matrícula</th><th style="text-align:right">Total (€)</th><th>Ficheiro</th><th>Importado em</th></tr>
-            </thead>
-            <tbody>
-              ${history.map((item) => `
-                <tr>
-                  <td>${escapeHtml(formatMonth(item.month))}</td>
-                  <td><strong>${escapeHtml(item.plate)}</strong></td>
-                  <td style="text-align:right">${escapeHtml(item.amount.toFixed(2))} €</td>
-                  <td class="compact-cell">${escapeHtml(item.sourceFile)}</td>
-                  <td>${escapeHtml(formatDate(item.importedAt?.slice(0, 10)))}</td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
-        </div>
-      ` : '<p class="empty-state">Sem portagens importadas. Usa o botão acima para importar o primeiro relatório.</p>'}
-    </section>
-  `;
+        <datalist id="vistoria-plate-options">${plates.map((i) => `<option value="${escapeAttr(i.plate)}">${escapeHtml(`Equip. ${i.equipment || "-"} · ${i.description || ""}`)}</option>`).join("")}</datalist>
+        ${VISTORIA_SECTIONS.map((section) => renderVistoriaSection(section, defaultType)).join("")}
+        <div class="form-actions"><button class="primary-button" type="submit"><span data-icon="check"></span><span>Guardar vistoria</span></button></div>
+      </form>
+    </section>`;
 }
 
-async function handleTollsImport() {
-  if (!tollPreview || !tollPreview.rows.length) return;
-  if (!remoteStatus.ready || !remoteClient) {
-    showToast("Sem ligação à base partilhada. Liga antes de importar.");
+function renderVistoriaSection(section, currentType) {
+  const visible = !section.types || section.types.includes(currentType);
+  const typesAttr = section.types ? ` data-section-types="${escapeAttr(section.types.join("|"))}"` : "";
+  return `
+    <fieldset class="vistoria-section"${typesAttr}${visible ? "" : ' style="display:none"'}>
+      <legend>${escapeHtml(section.name)}</legend>
+      ${section.items.map((item) => `
+        <div class="vistoria-item" data-section="${escapeAttr(section.name)}" data-item="${escapeAttr(item)}">
+          <span class="vistoria-item__label">${escapeHtml(item)}</span>
+          <select class="vistoria-item__state" data-vi-state>${VISTORIA_STATES.map((st) => `<option value="${escapeAttr(st)}">${escapeHtml(st)}</option>`).join("")}</select>
+          <input class="vistoria-item__note" data-vi-note placeholder="Observações">
+        </div>`).join("")}
+    </fieldset>`;
+}
+
+function renderVistoriaDetail() {
+  const v = state.vistorias.find((x) => String(x.id) === String(state.selectedVistoriaId));
+  if (!v) return `<div class="panel"><p class="empty-state">Vistoria não encontrada.</p></div>`;
+  const s = scoreVistoria(v.items);
+  const bySection = {};
+  (v.items || []).forEach((it) => { (bySection[it.section] = bySection[it.section] || []).push(it); });
+  return `
+    <div class="panel">
+      <div class="panel-header">
+        <div><p class="eyebrow">Vistoria</p><h2>Equip. ${escapeHtml(String(v.equipment || "-"))} · ${escapeHtml(v.plate || "-")}</h2>
+          <p>${formatDate(v.date)}${v.time ? ` ${escapeHtml(v.time)}` : ""} · ${escapeHtml(v.equipmentType || "-")} · ${escapeHtml(v.company || "-")}</p></div>
+        <div class="detail-subtitle">${vistoriaResultBadge(v.result)}</div>
+      </div>
+      <dl class="mini-grid">
+        <div><dt>Inspetor</dt><dd>${escapeHtml(v.inspector || "-")}</dd></div>
+        <div><dt>Motorista</dt><dd>${escapeHtml(v.driver || "-")}</dd></div>
+        <div><dt>Local</dt><dd>${escapeHtml(v.location || "-")}</dd></div>
+        <div><dt>Pontuação</dt><dd>${s.penalty} (${s.obs} obs · ${s.crit} crít.)</dd></div>
+      </dl>
+      ${Object.entries(bySection).map(([name, items]) => `
+        <fieldset class="vistoria-section">
+          <legend>${escapeHtml(name)}</legend>
+          ${items.map((it) => `<div class="vistoria-item vistoria-item--readonly">
+            <span class="vistoria-item__label">${escapeHtml(it.item)}</span>
+            ${vistoriaStateBadge(it.state)}
+            <span class="vistoria-item__noteview">${escapeHtml(it.note || "")}</span>
+          </div>`).join("")}
+        </fieldset>`).join("")}
+      <div class="form-actions">
+        <button class="ghost-button" type="button" data-action="vistoria-subview" data-subview="list">Voltar à lista</button>
+        <button class="danger-button" type="button" data-action="delete-vistoria" data-id="${escapeAttr(v.id)}"><span data-icon="trash"></span><span>Eliminar</span></button>
+      </div>
+    </div>`;
+}
+
+function vistoriaResultBadge(result) {
+  const cls = result === "REPROVADO" ? "reprovado" : result === "APROVADO" ? "aprovado" : "observacoes";
+  return `<span class="badge vistoria-${cls}">${escapeHtml(result || "—")}</span>`;
+}
+
+function vistoriaStateBadge(stt) {
+  const cls = stt === "CRÍTICO" ? "reprovado" : stt === "OBS" ? "observacoes" : "aprovado";
+  return `<span class="badge vistoria-${cls}">${escapeHtml(stt)}</span>`;
+}
+
+function renderVistoriaKpis() {
+  const list = getFilteredVistorias();
+  const k = computeVistoriaKpis(list);
+  return `
+    <div class="panel">
+      <div class="panel-header"><div><p class="eyebrow">Indicadores</p><h2>KPIs da frota — vistorias</h2><p>${list.length} vistorias${state.filters.vistoriaType ? ` · ${escapeHtml(state.filters.vistoriaType)}` : ""}</p></div></div>
+      ${renderVistoriaTypeFilter()}
+      <div class="dashboard-grid">
+        ${kpiCard("Taxa de falha (itens)", `${k.itemFailPct}%`, `${k.failedItems} de ${k.totalItems} itens com OBS/crítico`)}
+        ${kpiCard("Vistorias reprovadas", `${k.reprovedPct}%`, `${k.reproved} de ${list.length} com item crítico`)}
+        ${kpiCard("Itens críticos", String(k.critItems), "anomalias graves registadas")}
+        ${kpiCard("Viaturas inspecionadas", String(k.distinctVehicles), "matrículas distintas")}
+      </div>
+      <div class="page-grid" style="margin-top:16px">
+        <div class="panel">
+          <div class="panel-header"><div><h3>Top de anomalias</h3><p>Itens mais sinalizados (OBS/crítico)</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>Item</th><th>Secção</th><th>Ocorrências</th><th>Críticos</th></tr></thead>
+          <tbody>${k.topAnomalies.length ? k.topAnomalies.map((a) => `<tr><td><strong>${escapeHtml(a.item)}</strong></td><td>${escapeHtml(a.section)}</td><td>${a.count}</td><td>${a.crit}</td></tr>`).join("") : `<tr><td colspan="4"><p class="empty-state">Sem anomalias registadas.</p></td></tr>`}</tbody></table></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div><h3>Reincidências por matrícula</h3><p>Mesma anomalia repetida em vistorias diferentes</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>Matrícula</th><th>Equip.</th><th>Anomalias reincidentes</th><th>Vistorias</th></tr></thead>
+          <tbody>${k.recurrences.length ? k.recurrences.map((r) => `<tr><td><strong>${escapeHtml(r.plate)}</strong></td><td>${escapeHtml(String(r.equipment || "-"))}</td><td>${r.recurringItems}</td><td>${r.inspections}</td></tr>`).join("") : `<tr><td colspan="4"><p class="empty-state">Sem reincidências.</p></td></tr>`}</tbody></table></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function kpiCard(label, value, detail) {
+  return `<article class="dashboard-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><em>${escapeHtml(detail)}</em></article>`;
+}
+
+function computeVistoriaKpis(list) {
+  let totalItems = 0, failedItems = 0, critItems = 0, reproved = 0;
+  const anomalyMap = {};
+  const plateMap = {};
+  for (const v of list) {
+    if (v.result === "REPROVADO") reproved += 1;
+    const p = plateMap[v.plate] || (plateMap[v.plate] = { equipment: v.equipment, inspections: 0, itemCounts: {} });
+    p.inspections += 1;
+    const seen = new Set();
+    for (const it of v.items || []) {
+      totalItems += 1;
+      if (it.state === "OK") continue;
+      failedItems += 1;
+      if (it.state === "CRÍTICO") critItems += 1;
+      const key = `${it.item}|${it.section}`;
+      const a = anomalyMap[key] || (anomalyMap[key] = { item: it.item, section: it.section, count: 0, crit: 0 });
+      a.count += 1;
+      if (it.state === "CRÍTICO") a.crit += 1;
+      if (!seen.has(it.item)) {
+        p.itemCounts[it.item] = (p.itemCounts[it.item] || 0) + 1;
+        seen.add(it.item);
+      }
+    }
+  }
+  const topAnomalies = Object.values(anomalyMap).sort((a, b) => b.count - a.count || b.crit - a.crit).slice(0, 10);
+  const recurrences = Object.entries(plateMap)
+    .map(([plate, p]) => ({ plate, equipment: p.equipment, inspections: p.inspections, recurringItems: Object.values(p.itemCounts).filter((c) => c >= 2).length }))
+    .filter((r) => r.recurringItems > 0)
+    .sort((a, b) => b.recurringItems - a.recurringItems)
+    .slice(0, 10);
+  return {
+    totalItems, failedItems, critItems,
+    itemFailPct: totalItems ? Math.round((failedItems / totalItems) * 100) : 0,
+    reproved, reprovedPct: list.length ? Math.round((reproved / list.length) * 100) : 0,
+    distinctVehicles: Object.keys(plateMap).length,
+    topAnomalies, recurrences
+  };
+}
+
+function generateVistoriaId() {
+  const stamp = new Date().toISOString().replace(/\D/g, "").slice(2, 14);
+  return `VS${stamp}${Math.floor(Math.random() * 90 + 10)}`;
+}
+
+function logVistoriaAudit(vistoria, action) {
+  const auditEvent = {
+    id: `VISTORIA-${vistoria.id}-${Date.now()}`,
+    breakdownId: "",
+    equipment: vistoria.equipment,
+    plate: vistoria.plate,
+    at: new Date().toISOString(),
+    action: `Vistoria: ${action}`,
+    status: vistoria.result,
+    note: `${vistoria.equipmentType} · pontuação ${vistoria.score}`
+  };
+  state.audit.unshift(auditEvent);
+  return auditEvent;
+}
+
+async function handleNewVistoria(form) {
+  const data = new FormData(form);
+  const plateInput = String(data.get("plate") || "").trim();
+  const fleetItem = findFleetByPlate(plateInput);
+  const plateField = form.querySelector("#vistoria-plate");
+  if (!fleetItem) {
+    if (plateField) {
+      plateField.setCustomValidity("Escolha uma matrícula existente na frota.");
+      plateField.reportValidity();
+    }
+    showToast("Matrícula não encontrada na frota.");
     return;
   }
-  const now = new Date().toISOString();
-  const rows = tollPreview.rows.map((row) => ({
-    id: `PORTAGEM-${row.plate}-${row.month}-${tollPreview.fileName}`,
-    plate: row.plate,
-    month: row.month,
-    amount: row.amount,
-    sourceFile: tollPreview.fileName,
-    importedAt: now,
-    importedBy: remoteConfig.operator || "Utilizador"
-  }));
-  try {
-    updateSyncStatus("A importar portagens", "syncing", true);
-    const { error } = await remoteClient
-      .from("avarias_custos_portagens")
-      .upsert(rows.map(appCustoToDb), { onConflict: "id" });
-    if (error) throw error;
-    for (const row of rows) {
-      const idx = state.custos.findIndex((c) => c.id === row.id);
-      if (idx >= 0) state.custos[idx] = row;
-      else state.custos.unshift(row);
-    }
-    tollPreview = null;
-    saveState();
-    updateSyncStatus("Partilhado em tempo real", "remote", true);
-    showToast(`${rows.length} registos importados.`);
-    render();
-  } catch (error) {
-    console.error(error);
-    updateSyncStatus(`Erro: ${formatRemoteError(error)}`, "error", false);
-    showToast("Erro ao importar portagens.");
-  }
+  if (plateField) plateField.setCustomValidity("");
+
+  const type = String(data.get("equipmentType") || VISTORIA_TYPES[0]);
+  const applicable = new Set(vistoriaSectionsForType(type).map((s) => s.name));
+  const items = [];
+  form.querySelectorAll(".vistoria-item").forEach((row) => {
+    if (!applicable.has(row.dataset.section)) return;
+    items.push({
+      section: row.dataset.section,
+      item: row.dataset.item,
+      state: row.querySelector("[data-vi-state]")?.value || "OK",
+      note: (row.querySelector("[data-vi-note]")?.value || "").trim()
+    });
+  });
+
+  const score = scoreVistoria(items);
+  const vistoria = {
+    id: generateVistoriaId(),
+    date: String(data.get("date") || todayISO()),
+    time: String(data.get("time") || ""),
+    company: String(data.get("company") || "") || fleetItem.fleetCompany || "",
+    location: String(data.get("location") || "").trim(),
+    inspector: String(data.get("inspector") || "").trim(),
+    driver: String(data.get("driver") || "").trim(),
+    plate: fleetItem.plate || plateInput,
+    equipment: fleetItem.equipment,
+    equipmentType: type,
+    items,
+    score: score.penalty,
+    result: vistoriaResult(items),
+    createdAt: new Date().toISOString(),
+    createdBy: remoteConfig.operator || "Utilizador"
+  };
+
+  state.vistorias.unshift(vistoria);
+  state.selectedVistoriaId = vistoria.id;
+  state.vistoriaSubView = "detail";
+  const auditEvent = logVistoriaAudit(vistoria, "Vistoria registada");
+  saveState();
+  showToast(`Vistoria registada — ${vistoria.result}.`);
+  render();
+  await persistRemoteSafely(async () => {
+    await persistVistoriaRemote(vistoria);
+    await persistAuditRemote(auditEvent);
+  });
 }
 
-// --- FIM CUSTOS ---
+async function deleteVistoria(id) {
+  const v = state.vistorias.find((x) => String(x.id) === String(id));
+  if (!v) return;
+  if (!window.confirm(`Eliminar a vistoria de ${formatDate(v.date)} à viatura ${v.plate || v.equipment}?`)) return;
+  state.vistorias = state.vistorias.filter((x) => x !== v);
+  if (state.selectedVistoriaId === String(id)) {
+    state.selectedVistoriaId = "";
+    state.vistoriaSubView = "list";
+  }
+  const auditEvent = logVistoriaAudit(v, "Vistoria eliminada");
+  saveState();
+  showToast("Vistoria eliminada.");
+  render();
+  await persistRemoteSafely(async () => {
+    await deleteVistoriaRemote(id);
+    await persistAuditRemote(auditEvent);
+  });
+}
 
 function appFleetToDb(item) {
   return {
@@ -860,8 +1108,8 @@ function render(focusSelector = "") {
     breakdowns: renderBreakdowns,
     new: renderNewBreakdown,
     fleet: renderFleet,
-    audit: renderAudit,
-    custos: renderCustos
+    vistoria: renderVistoria,
+    audit: renderAudit
   };
   main.innerHTML = (views[state.currentView] || renderMeeting)();
   hydrateIcons();
@@ -2253,8 +2501,8 @@ function buildActivePanelWorkbook() {
     breakdowns: buildBreakdownsExport,
     new: buildMeetingExport,
     fleet: buildFleetExport,
-    audit: buildAuditExport,
-    custos: buildCustosExport
+    vistoria: buildVistoriaExport,
+    audit: buildAuditExport
   };
   return (builders[view] || buildBreakdownsExport)();
 }
@@ -2396,23 +2644,29 @@ function buildAuditExport() {
   };
 }
 
-function buildCustosExport() {
-  const sorted = [...state.custos].sort((a, b) => b.month.localeCompare(a.month) || a.plate.localeCompare(b.plate));
+function buildVistoriaExport() {
+  const list = getFilteredVistorias();
+  const anomalyRows = list.flatMap((v) => (v.items || [])
+    .filter((it) => it.state !== "OK")
+    .map((it) => [v.date || "", v.plate || "", String(v.equipment || ""), v.equipmentType || "", it.section, it.item, it.state, it.note || ""]));
   return {
-    title: "Portagens",
-    fileName: `portagens-${todayISO()}`,
-    tables: [{
-      title: "Portagens por viatura e mês",
-      columns: ["Mês", "Matrícula", "Total (€)", "Ficheiro", "Importado em", "Por"],
-      rows: sorted.map((item) => [
-        formatMonth(item.month),
-        item.plate,
-        item.amount.toFixed(2),
-        item.sourceFile,
-        formatDate(item.importedAt?.slice(0, 10)),
-        item.importedBy
-      ])
-    }]
+    title: "Vistorias",
+    fileName: `vistorias-${todayISO()}`,
+    tables: [
+      {
+        title: "Vistorias",
+        columns: ["Data", "Hora", "Empresa", "Matrícula", "Equip.", "Tipo equipamento", "Inspetor", "Motorista", "Local", "Pontuação", "Resultado", "Itens OK", "Observações", "Críticos"],
+        rows: list.map((v) => {
+          const s = scoreVistoria(v.items);
+          return [v.date || "", v.time || "", v.company || "", v.plate || "", String(v.equipment || ""), v.equipmentType || "", v.inspector || "", v.driver || "", v.location || "", s.penalty, v.result || "", s.ok, s.obs, s.crit];
+        })
+      },
+      {
+        title: "Anomalias",
+        columns: ["Data", "Matrícula", "Equip.", "Tipo equipamento", "Secção", "Item", "Estado", "Observações"],
+        rows: anomalyRows
+      }
+    ]
   };
 }
 

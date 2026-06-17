@@ -169,6 +169,14 @@ document.addEventListener("change", async (event) => {
   if (target.id === "vistoria-type") {
     applyVistoriaTypeVisibility(target.value);
   }
+  if (target.dataset.viPhoto !== undefined && target.type === "file") {
+    const label = target.closest(".vistoria-item__photo");
+    const n = target.files?.length || 0;
+    if (label) {
+      label.classList.toggle("has-photos", n > 0);
+      label.title = n > 0 ? `${n} foto(s) selecionada(s)` : "Anexar foto (opcional)";
+    }
+  }
 });
 
 document.addEventListener("submit", async (event) => {
@@ -730,6 +738,10 @@ function renderVistoriaSection(section, currentType) {
           <span class="vistoria-item__label">${escapeHtml(item)}</span>
           <select class="vistoria-item__state" data-vi-state>${VISTORIA_STATES.map((st) => `<option value="${escapeAttr(st)}">${escapeHtml(st)}</option>`).join("")}</select>
           <input class="vistoria-item__note" data-vi-note placeholder="Observações">
+          <label class="vistoria-item__photo" title="Anexar foto (opcional)">
+            <span data-icon="paperclip"></span>
+            <input type="file" data-vi-photo accept="image/*" multiple hidden>
+          </label>
         </div>`).join("")}
     </fieldset>`;
 }
@@ -756,11 +768,15 @@ function renderVistoriaDetail() {
       ${Object.entries(bySection).map(([name, items]) => `
         <fieldset class="vistoria-section">
           <legend>${escapeHtml(name)}</legend>
-          ${items.map((it) => `<div class="vistoria-item vistoria-item--readonly">
+          ${items.map((it) => {
+            const photos = normalizeAttachments(it.photos);
+            return `<div class="vistoria-item vistoria-item--readonly">
             <span class="vistoria-item__label">${escapeHtml(it.item)}</span>
             ${vistoriaStateBadge(it.state)}
             <span class="vistoria-item__noteview">${escapeHtml(it.note || "")}</span>
-          </div>`).join("")}
+            ${photos.length ? `<div class="vistoria-item__photos">${photos.map(renderAttachmentItem).join("")}</div>` : '<span></span>'}
+          </div>`;
+          }).join("")}
         </fieldset>`).join("")}
       <div class="form-actions">
         <button class="ghost-button" type="button" data-action="vistoria-subview" data-subview="list">Voltar à lista</button>
@@ -887,20 +903,38 @@ async function handleNewVistoria(form) {
 
   const type = String(data.get("equipmentType") || VISTORIA_TYPES[0]);
   const applicable = new Set(vistoriaSectionsForType(type).map((s) => s.name));
+  const id = generateVistoriaId();
   const items = [];
-  form.querySelectorAll(".vistoria-item").forEach((row) => {
+  const pendingPhotos = [];
+  form.querySelectorAll(".vistoria-item").forEach((row, index) => {
     if (!applicable.has(row.dataset.section)) return;
-    items.push({
+    const entry = {
       section: row.dataset.section,
       item: row.dataset.item,
       state: row.querySelector("[data-vi-state]")?.value || "OK",
       note: (row.querySelector("[data-vi-note]")?.value || "").trim()
-    });
+    };
+    const files = row.querySelector("[data-vi-photo]")?.files;
+    if (files && files.length) pendingPhotos.push({ entry, files, index });
+    items.push(entry);
   });
+
+  // Upload das fotos (opcionais) por ponto. Se falhar, regista a vistoria na mesma.
+  let photoWarning = false;
+  for (const { entry, files, index } of pendingPhotos) {
+    try {
+      const uploaded = await uploadBreakdownAttachments(`vistorias/${id}/${index}`, files);
+      if (uploaded.length) entry.photos = uploaded;
+    } catch (error) {
+      console.error("Falha ao carregar fotos da vistoria:", error);
+      photoWarning = true;
+    }
+  }
+  if (photoWarning) showToast("Algumas fotos não foram carregadas (vistoria guardada na mesma).");
 
   const score = scoreVistoria(items);
   const vistoria = {
-    id: generateVistoriaId(),
+    id,
     date: String(data.get("date") || todayISO()),
     time: String(data.get("time") || ""),
     company: String(data.get("company") || "") || fleetItem.fleetCompany || "",
@@ -2653,8 +2687,8 @@ function buildAuditExport() {
 function buildVistoriaExport() {
   const list = getFilteredVistorias();
   const anomalyRows = list.flatMap((v) => (v.items || [])
-    .filter((it) => it.state !== "OK")
-    .map((it) => [v.date || "", v.plate || "", String(v.equipment || ""), v.equipmentType || "", it.section, it.item, it.state, it.note || ""]));
+    .filter((it) => it.state !== "OK" || normalizeAttachments(it.photos).length)
+    .map((it) => [v.date || "", v.plate || "", String(v.equipment || ""), v.equipmentType || "", it.section, it.item, it.state, it.note || "", formatAttachmentLinks(it.photos)]));
   return {
     title: "Vistorias",
     fileName: `vistorias-${todayISO()}`,
@@ -2669,7 +2703,7 @@ function buildVistoriaExport() {
       },
       {
         title: "Anomalias",
-        columns: ["Data", "Matrícula", "Equip.", "Tipo equipamento", "Secção", "Item", "Estado", "Observações"],
+        columns: ["Data", "Matrícula", "Equip.", "Tipo equipamento", "Secção", "Item", "Estado", "Observações", "Fotos (links)"],
         rows: anomalyRows
       }
     ]

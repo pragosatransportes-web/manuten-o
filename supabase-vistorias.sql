@@ -33,3 +33,10 @@ create policy "avarias_vistorias_all"
 
 -- Ativar sincronização em tempo real (realtime).
 alter publication supabase_realtime add table public.avarias_vistorias;
+
+-- Ligação avaria -> vistoria de origem (processo A→Z).
+-- Colunas adicionadas à tabela de avarias para guardar a vistoria/ponto que originou a avaria.
+alter table public.avarias_breakdowns add column if not exists vistoria_id text;
+alter table public.avarias_breakdowns add column if not exists vistoria_item text;
+alter table public.avarias_breakdowns add column if not exists vistoria_section text;
+alter table public.avarias_breakdowns add column if not exists vistoria_date date;

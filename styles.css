@@ -1028,6 +1028,44 @@ td strong { font-weight: 600; font-size: 14px; }
 .badge.vistoria-observacoes { color: var(--amber); background: #fef3c7; }
 .badge.vistoria-reprovado   { color: #7f1d1d; background: #fee2e2; }
 
+/* Ações por ponto + ligação vistoria <-> avaria */
+.vistoria-item__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.link-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px 12px;
+  padding: 10px 14px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.chip-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: #fff;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chip-link:hover { border-color: var(--accent); background: var(--accent-pale); }
+
 @media (max-width: 720px) {
   .vistoria-item, .vistoria-item--readonly { grid-template-columns: 1fr; }
 }

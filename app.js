@@ -63,6 +63,8 @@ document.addEventListener("click", async (event) => {
 
   const view = button.dataset.view;
   if (view) {
+    // Abandonar uma ligação vistoria→avaria pendente se sair sem registar a avaria.
+    if (view !== "new") state.avariaFromVistoria = null;
     state.currentView = view;
     saveState();
     render();
@@ -131,11 +133,15 @@ document.addEventListener("click", async (event) => {
   if (action === "select-vistoria") {
     state.selectedVistoriaId = button.dataset.id;
     state.vistoriaSubView = "detail";
+    state.currentView = "vistoria";
     saveState();
     render();
   }
   if (action === "delete-vistoria") {
     await deleteVistoria(button.dataset.id);
+  }
+  if (action === "avaria-from-vistoria") {
+    startAvariaFromVistoria(button.dataset.id, button.dataset.section, button.dataset.item);
   }
 });
 
@@ -234,6 +240,7 @@ function makeInitialState() {
     breakdownsSort: "desc",
     vistoriaSubView: "kpis",
     selectedVistoriaId: "",
+    avariaFromVistoria: null,
     sourceGeneratedAt: seed.generatedAt || "",
     fleet: seed.fleet || [],
     vistorias: [],
@@ -750,6 +757,7 @@ function renderVistoriaDetail() {
   const v = state.vistorias.find((x) => String(x.id) === String(state.selectedVistoriaId));
   if (!v) return `<div class="panel"><p class="empty-state">Vistoria não encontrada.</p></div>`;
   const s = scoreVistoria(v.items);
+  const linked = getVistoriaBreakdowns(v.id);
   const bySection = {};
   (v.items || []).forEach((it) => { (bySection[it.section] = bySection[it.section] || []).push(it); });
   return `
@@ -765,16 +773,26 @@ function renderVistoriaDetail() {
         <div><dt>Local</dt><dd>${escapeHtml(v.location || "-")}</dd></div>
         <div><dt>Pontuação</dt><dd>${s.penalty} (${s.obs} obs · ${s.crit} crít.)</dd></div>
       </dl>
+      ${linked.length ? `
+        <div class="link-banner">
+          <strong>Avarias geradas a partir desta vistoria (${linked.length}):</strong>
+          ${linked.map((b) => `<button class="chip-link" type="button" data-action="select-breakdown" data-id="${escapeAttr(b.id)}" title="Abrir avaria">🔧 ${escapeHtml(b.type || "Avaria")} · ${escapeHtml(b.status)}${b.vistoriaItem ? ` · ${escapeHtml(b.vistoriaItem)}` : ""}</button>`).join("")}
+        </div>` : ""}
       ${Object.entries(bySection).map(([name, items]) => `
         <fieldset class="vistoria-section">
           <legend>${escapeHtml(name)}</legend>
           ${items.map((it) => {
             const photos = normalizeAttachments(it.photos);
+            const itemBreakdowns = linked.filter((b) => b.vistoriaItem === it.item && b.vistoriaSection === it.section);
             return `<div class="vistoria-item vistoria-item--readonly">
             <span class="vistoria-item__label">${escapeHtml(it.item)}</span>
             ${vistoriaStateBadge(it.state)}
             <span class="vistoria-item__noteview">${escapeHtml(it.note || "")}</span>
-            ${photos.length ? `<div class="vistoria-item__photos">${photos.map(renderAttachmentItem).join("")}</div>` : '<span></span>'}
+            ${photos.length ? `<div class="vistoria-item__photos">${photos.map(renderAttachmentItem).join("")}</div>` : ""}
+            <div class="vistoria-item__actions">
+              <button class="link-button" type="button" data-action="avaria-from-vistoria" data-id="${escapeAttr(v.id)}" data-section="${escapeAttr(it.section)}" data-item="${escapeAttr(it.item)}">+ Criar avaria deste ponto</button>
+              ${itemBreakdowns.map((b) => `<button class="chip-link" type="button" data-action="select-breakdown" data-id="${escapeAttr(b.id)}" title="Abrir avaria associada">🔧 ${escapeHtml(b.type || "Avaria")} · ${escapeHtml(b.status)}</button>`).join("")}
+            </div>
           </div>`;
           }).join("")}
         </fieldset>`).join("")}
@@ -964,6 +982,29 @@ async function handleNewVistoria(form) {
   });
 }
 
+function startAvariaFromVistoria(vistoriaId, section, item) {
+  const v = state.vistorias.find((x) => String(x.id) === String(vistoriaId));
+  if (!v) return;
+  const entry = (v.items || []).find((it) => it.section === section && it.item === item);
+  state.avariaFromVistoria = {
+    vistoriaId: v.id,
+    section: section || "",
+    item: item || "",
+    date: v.date || "",
+    plate: v.plate || "",
+    equipment: v.equipment,
+    note: entry?.note || "",
+    state: entry?.state || ""
+  };
+  state.currentView = "new";
+  saveState();
+  render();
+}
+
+function getVistoriaBreakdowns(vistoriaId) {
+  return state.breakdowns.filter((b) => String(b.vistoriaId || "") === String(vistoriaId));
+}
+
 async function deleteVistoria(id) {
   const v = state.vistorias.find((x) => String(x.id) === String(id));
   if (!v) return;
@@ -1049,6 +1090,14 @@ function appBreakdownToDb(item) {
   };
   const attachments = normalizeAttachments(item.attachments);
   if (attachments.length) row.attachments = attachments;
+  // Ligação à vistoria de origem — só envia as colunas quando existe ligação,
+  // para não exigir as colunas nas avarias antigas (sem ligação).
+  if (item.vistoriaId) {
+    row.vistoria_id = String(item.vistoriaId);
+    row.vistoria_item = item.vistoriaItem || null;
+    row.vistoria_section = item.vistoriaSection || null;
+    row.vistoria_date = item.vistoriaDate || null;
+  }
   return row;
 }
 
@@ -1071,7 +1120,11 @@ function dbBreakdownToApp(row) {
     lastNote: row.last_note || "",
     lastNoteAt: row.last_note_at || null,
     historyNotes: row.history_notes || "",
-    attachments: normalizeAttachments(row.attachments)
+    attachments: normalizeAttachments(row.attachments),
+    vistoriaId: row.vistoria_id || "",
+    vistoriaItem: row.vistoria_item || "",
+    vistoriaSection: row.vistoria_section || "",
+    vistoriaDate: row.vistoria_date || ""
   });
 }
 
@@ -1380,6 +1433,12 @@ function renderDetail(breakdown) {
       <div><dt>Última nota</dt><dd>${escapeHtml(breakdown.lastNote || "-")}</dd></div>
     </dl>
 
+    ${breakdown.vistoriaId ? `
+      <div class="link-banner">
+        <span>🔗 Origem: <strong>vistoria de ${escapeHtml(formatDate(breakdown.vistoriaDate))}</strong>${breakdown.vistoriaItem ? ` — ponto <strong>${escapeHtml(breakdown.vistoriaItem)}</strong>` : ""}.</span>
+        <button class="chip-link" type="button" data-action="select-vistoria" data-id="${escapeAttr(breakdown.vistoriaId)}">Ver vistoria</button>
+      </div>` : ""}
+
     ${renderAttachments(breakdown)}
 
     <form class="quick-form" data-form="quick-update">
@@ -1540,24 +1599,34 @@ function renderBreakdowns() {
 
 function renderNewBreakdown() {
   const today = todayISO();
+  const link = state.avariaFromVistoria;
+  const descPrefill = link
+    ? `[Vistoria ${formatDate(link.date)}] ${link.item}${link.state ? ` (${link.state})` : ""}${link.note ? ` — ${link.note}` : ""}`
+    : "";
+  const banner = link ? `
+    <div class="link-banner">
+      <span>🔗 Esta avaria fica ligada à <strong>vistoria de ${escapeHtml(formatDate(link.date))}</strong> — ponto <strong>${escapeHtml(link.item)}</strong>${link.state ? ` [${escapeHtml(link.state)}]` : ""}.</span>
+      <button class="chip-link" type="button" data-action="select-vistoria" data-id="${escapeAttr(link.vistoriaId)}">Ver vistoria</button>
+    </div>` : "";
   return `
     <section class="panel form-panel">
       <div class="panel-header">
         <div>
           <p class="eyebrow">Entrada</p>
-          <h2>Nova avaria</h2>
+          <h2>Nova avaria${link ? " (origem: vistoria)" : ""}</h2>
           <p>Registo com data, estado inicial e primeira nota.</p>
         </div>
       </div>
+      ${banner}
       <form class="data-form" data-form="new-breakdown">
         <div class="form-grid">
           <label class="field">
             <span>Matrícula</span>
-            <input id="new-plate" name="plate" list="plate-options" autocomplete="off" required>
+            <input id="new-plate" name="plate" list="plate-options" autocomplete="off" value="${escapeAttr(link?.plate || "")}" required>
           </label>
           <label class="field">
             <span>Equipamento</span>
-            <input id="new-equipment" name="equipment" placeholder="Preenchido pela matrícula" readonly>
+            <input id="new-equipment" name="equipment" placeholder="Preenchido pela matrícula" value="${escapeAttr(link?.equipment ?? "")}" readonly>
           </label>
           <label class="field">
             <span>Tipo</span>
@@ -1607,7 +1676,7 @@ function renderNewBreakdown() {
           </label>
           <label class="field full-span">
             <span>Descrição</span>
-            <textarea name="description" required></textarea>
+            <textarea name="description" required>${escapeHtml(descPrefill)}</textarea>
           </label>
           <label class="field file-field full-span">
             <span>Ficheiro/fotografia</span>
@@ -2129,10 +2198,21 @@ async function handleNewBreakdown(form) {
     attachments
   };
 
+  // Ligação à vistoria de origem, se a avaria foi criada a partir de um ponto da vistoria.
+  const link = state.avariaFromVistoria;
+  if (link && String(link.equipment) === String(equipment)) {
+    breakdown.vistoriaId = link.vistoriaId;
+    breakdown.vistoriaItem = link.item || "";
+    breakdown.vistoriaSection = link.section || "";
+    breakdown.vistoriaDate = link.date || "";
+  }
+  state.avariaFromVistoria = null;
+
   state.breakdowns.unshift(breakdown);
   state.selectedId = breakdown.id;
   state.currentView = "meeting";
-  const auditEvent = logAudit(breakdown, "Nova avaria", attachmentNote ? `${description} | Anexos: ${attachmentNote}` : description);
+  const originNote = breakdown.vistoriaId ? ` | Origem: vistoria ${formatDate(breakdown.vistoriaDate)} (${breakdown.vistoriaItem})` : "";
+  const auditEvent = logAudit(breakdown, "Nova avaria", `${attachmentNote ? `${description} | Anexos: ${attachmentNote}` : description}${originNote}`);
   saveState();
   showToast("Nova avaria criada.");
   render();

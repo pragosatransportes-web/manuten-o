@@ -674,7 +674,7 @@ function renderVistoria() {
   else if (sub === "detail") body = renderVistoriaDetail();
   else if (sub === "edit") body = renderVistoriaEdit();
   else body = renderVistoriaKpis();
-  return `<section class="vistoria-view">${subnav}${body}</section>`;
+  return `<section class="vistoria-view">${subnav}${body}${renderVistoriaLegend()}</section>`;
 }
 
 function renderVistoriaTypeFilter() {
@@ -917,6 +917,27 @@ async function handleEditVistoria(form) {
     await persistVistoriaRemote(v);
     await persistAuditRemote(auditEvent);
   });
+}
+
+function renderVistoriaLegend() {
+  return `
+    <div class="panel vistoria-legend">
+      <div class="panel-header"><div><p class="eyebrow">Legenda</p><h3>Critério de resultado</h3></div></div>
+      <div class="legend-body">
+        <ul class="legend-list">
+          <li>${vistoriaResultBadge("REPROVADO")} mais de 40% dos pontos avaliados em CRÍTICO</li>
+          <li>${vistoriaResultBadge("APROVADO C/ ANOTAÇÕES")} tem pontos críticos, mas ≤ 40%</li>
+          <li>${vistoriaResultBadge("APROVADO C/ OBSERVAÇÕES")} sem críticos, com observações</li>
+          <li>${vistoriaResultBadge("APROVADO")} sem críticos e sem observações</li>
+        </ul>
+        <ul class="legend-list">
+          <li>${vistoriaStateBadge("OK")} ponto conforme</li>
+          <li>${vistoriaStateBadge("SOB OBS")} sob observação (anomalia menor)</li>
+          <li>${vistoriaStateBadge("CRÍTICO")} anomalia grave</li>
+          <li>${vistoriaStateBadge("N/A")} não avaliado (fora da pontuação)</li>
+        </ul>
+      </div>
+    </div>`;
 }
 
 function vistoriaResultBadge(result) {

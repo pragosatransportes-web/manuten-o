@@ -1025,10 +1025,27 @@ td strong { font-weight: 600; font-size: 14px; }
 .vistoria-item__photos .attachment-preview img { width: 64px; height: 64px; object-fit: cover; border-radius: var(--radius-sm); }
 
 .badge.vistoria-aprovado    { color: #14532d; background: #dcfce7; }
-.badge.vistoria-observacoes { color: var(--amber); background: #fef3c7; }
-.badge.vistoria-anotacoes   { color: #9a3412; background: #ffedd5; }
-.badge.vistoria-reprovado   { color: #7f1d1d; background: #fee2e2; }
+.badge.vistoria-observacoes { color: #854d0e; background: #fef08a; }
+.badge.vistoria-anotacoes   { color: #7c2d12; background: #fb923c; }
+.badge.vistoria-reprovado   { color: #7f1d1d; background: #fecaca; }
 .badge.vistoria-na          { color: #6b7280; background: #f3f4f6; }
+
+/* Legenda do critério (fundo da página da vistoria) */
+.vistoria-legend { margin-top: 16px; }
+.legend-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 40px;
+  padding: 16px 18px;
+}
+.legend-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+.legend-list li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--muted);
+}
 
 /* Ações por ponto + ligação vistoria <-> avaria */
 .vistoria-item__actions {

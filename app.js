@@ -22,7 +22,7 @@ const VISTORIA_SECTIONS = [
 ];
 
 const VISTORIA_TYPES = ["Trator/Camião", "Semi-reboque Basculante", "Porta-Máquinas", "Estrados", "Semi-reboque Caixa", "Cisterna", "Outro"];
-const VISTORIA_STATES = ["OK", "SOB OBS", "CRÍTICO"];
+const VISTORIA_STATES = ["OK", "SOB OBS", "CRÍTICO", "N/A"];
 const seed = window.AVARIAS_SEED || {};
 const remoteConfig = window.AVARIAS_REMOTE_CONFIG || {};
 const options = seed.options || {
@@ -550,13 +550,15 @@ function buildVistoriaItems(type) {
 }
 
 function scoreVistoria(items) {
-  let penalty = 0, ok = 0, obs = 0, crit = 0;
+  let penalty = 0, ok = 0, obs = 0, crit = 0, na = 0;
   for (const it of items || []) {
     if (it.state === "SOB OBS") { penalty += 1; obs += 1; }
     else if (it.state === "CRÍTICO") { penalty += 3; crit += 1; }
+    else if (it.state === "N/A") { na += 1; } // não avaliado — não conta
     else { ok += 1; }
   }
-  return { penalty, ok, obs, crit, total: (items || []).length };
+  // "total" só conta os pontos efetivamente avaliados (exclui N/A)
+  return { penalty, ok, obs, crit, na, total: (items || []).length - na };
 }
 
 function vistoriaResult(items) {
@@ -783,7 +785,7 @@ function renderVistoriaDetail() {
         <div><dt>Inspetor</dt><dd>${escapeHtml(v.inspector || "-")}</dd></div>
         <div><dt>Motorista</dt><dd>${escapeHtml(v.driver || "-")}</dd></div>
         <div><dt>Local</dt><dd>${escapeHtml(v.location || "-")}</dd></div>
-        <div><dt>Pontuação</dt><dd>${s.penalty} (${s.obs} obs · ${s.crit} crít.)</dd></div>
+        <div><dt>Pontuação</dt><dd>${s.penalty} (${s.obs} obs · ${s.crit} crít.${s.na ? ` · ${s.na} N/A` : ""})</dd></div>
       </dl>
       ${linked.length ? `
         <div class="link-banner">
@@ -916,7 +918,7 @@ function vistoriaResultBadge(result) {
 }
 
 function vistoriaStateBadge(stt) {
-  const cls = stt === "CRÍTICO" ? "reprovado" : stt === "SOB OBS" ? "observacoes" : "aprovado";
+  const cls = stt === "CRÍTICO" ? "reprovado" : stt === "SOB OBS" ? "observacoes" : stt === "N/A" ? "na" : "aprovado";
   return `<span class="badge vistoria-${cls}">${escapeHtml(stt)}</span>`;
 }
 
@@ -962,6 +964,7 @@ function computeVistoriaKpis(list) {
     p.inspections += 1;
     const seen = new Set();
     for (const it of v.items || []) {
+      if (it.state === "N/A") continue; // não avaliado — não entra na taxa de falha
       totalItems += 1;
       if (it.state === "OK") continue;
       failedItems += 1;
@@ -2872,6 +2875,7 @@ function buildAuditExport() {
 }
 
 function vistoriaSevRank(st) {
+  if (st === "N/A") return -1; // não avaliado — fora da comparação
   return st === "CRÍTICO" ? 2 : st === "SOB OBS" ? 1 : 0;
 }
 
@@ -2881,12 +2885,12 @@ function buildVistoriaExport() {
   // Resumo por vistoria
   const resumoRows = list.map((v) => {
     const s = scoreVistoria(v.items);
-    return [v.date || "", v.time || "", v.company || "", v.plate || "", String(v.equipment || ""), v.equipmentType || "", v.inspector || "", v.driver || "", v.location || "", s.penalty, v.result || "", s.ok, s.obs, s.crit];
+    return [v.date || "", v.time || "", v.company || "", v.plate || "", String(v.equipment || ""), v.equipmentType || "", v.inspector || "", v.driver || "", v.location || "", s.penalty, v.result || "", s.ok, s.obs, s.crit, s.na];
   });
 
-  // Pontos negativos (destaque) — críticos primeiro, depois sob observação
+  // Pontos negativos (destaque) — críticos primeiro, depois sob observação (exclui N/A e OK)
   const negRows = list.flatMap((v) => (v.items || [])
-    .filter((it) => it.state !== "OK")
+    .filter((it) => it.state === "SOB OBS" || it.state === "CRÍTICO")
     .map((it) => [it.state === "CRÍTICO" ? "🔴" : "🟡", it.state, v.date || "", v.plate || "", String(v.equipment || ""), v.equipmentType || "", it.section, it.item, it.note || "", formatAttachmentLinks(it.photos)]));
   negRows.sort((a, b) => (vistoriaSevRank(b[1]) - vistoriaSevRank(a[1])) || (b[2] || "").localeCompare(a[2] || ""));
 
@@ -2910,6 +2914,7 @@ function buildVistoriaExport() {
       if (!p) continue;
       const pr = vistoriaSevRank(p.state);
       const cr = vistoriaSevRank(it.state);
+      if (pr < 0 || cr < 0) continue; // algum lado N/A (não avaliado) — não compara
       if (pr === 0 && cr === 0) continue; // sempre OK, nada a relatar
       let tend;
       if (cr > pr) tend = "🔴 ALERTA (piorou)";
@@ -2926,7 +2931,7 @@ function buildVistoriaExport() {
   for (const arr of Object.values(byPlate)) {
     chrono(arr);
     const flagged = new Set();
-    arr.forEach((v) => (v.items || []).forEach((it) => { if (it.state !== "OK") flagged.add(it.item); }));
+    arr.forEach((v) => (v.items || []).forEach((it) => { if (it.state === "SOB OBS" || it.state === "CRÍTICO") flagged.add(it.item); }));
     for (const v of arr) {
       for (const it of (v.items || [])) {
         if (!flagged.has(it.item)) continue;
@@ -2942,7 +2947,7 @@ function buildVistoriaExport() {
     tables: [
       {
         title: "Resumo vistorias",
-        columns: ["Data", "Hora", "Empresa", "Matrícula", "Equip.", "Tipo equipamento", "Inspetor", "Motorista", "Local", "Pontuação", "Resultado", "Itens OK", "Observações", "Críticos"],
+        columns: ["Data", "Hora", "Empresa", "Matrícula", "Equip.", "Tipo equipamento", "Inspetor", "Motorista", "Local", "Pontuação", "Resultado", "Itens OK", "Observações", "Críticos", "N/A"],
         rows: resumoRows
       },
       {

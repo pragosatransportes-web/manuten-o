@@ -561,9 +561,16 @@ function scoreVistoria(items) {
   return { penalty, ok, obs, crit, na, total: (items || []).length - na };
 }
 
+// Critério (sobre os pontos avaliados, excluindo N/A):
+//  > 40% em CRÍTICO            -> REPROVADO
+//  tem críticos, mas <= 40%    -> APROVADO C/ ANOTAÇÕES
+//  sem críticos, com observações -> APROVADO C/ OBSERVAÇÕES
+//  sem críticos e sem observações -> APROVADO
 function vistoriaResult(items) {
-  const { crit, obs } = scoreVistoria(items);
-  if (crit > 0) return "REPROVADO";
+  const { crit, obs, total } = scoreVistoria(items);
+  if (total === 0) return "APROVADO";
+  if (crit / total > 0.40) return "REPROVADO";
+  if (crit > 0) return "APROVADO C/ ANOTAÇÕES";
   if (obs > 0) return "APROVADO C/ OBSERVAÇÕES";
   return "APROVADO";
 }
@@ -679,7 +686,7 @@ function renderVistoriaTypeFilter() {
       </select>
       <select data-filter="vistoriaResult" aria-label="Resultado">
         <option value="">Todos os resultados</option>
-        ${["APROVADO", "APROVADO C/ OBSERVAÇÕES", "REPROVADO"].map((r) => `<option value="${escapeAttr(r)}" ${state.filters.vistoriaResult === r ? "selected" : ""}>${escapeHtml(r)}</option>`).join("")}
+        ${["APROVADO", "APROVADO C/ OBSERVAÇÕES", "APROVADO C/ ANOTAÇÕES", "REPROVADO"].map((r) => `<option value="${escapeAttr(r)}" ${state.filters.vistoriaResult === r ? "selected" : ""}>${escapeHtml(r)}</option>`).join("")}
       </select>
     </div>`;
 }
@@ -913,7 +920,11 @@ async function handleEditVistoria(form) {
 }
 
 function vistoriaResultBadge(result) {
-  const cls = result === "REPROVADO" ? "reprovado" : result === "APROVADO" ? "aprovado" : "observacoes";
+  const r = result || "";
+  const cls = r === "REPROVADO" ? "reprovado"
+    : r.includes("ANOTA") ? "anotacoes"
+    : r.includes("OBSERVA") ? "observacoes"
+    : "aprovado";
   return `<span class="badge vistoria-${cls}">${escapeHtml(result || "—")}</span>`;
 }
 

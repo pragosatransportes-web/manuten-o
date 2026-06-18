@@ -1026,6 +1026,7 @@ td strong { font-weight: 600; font-size: 14px; }
 
 .badge.vistoria-aprovado    { color: #14532d; background: #dcfce7; }
 .badge.vistoria-observacoes { color: var(--amber); background: #fef3c7; }
+.badge.vistoria-anotacoes   { color: #9a3412; background: #ffedd5; }
 .badge.vistoria-reprovado   { color: #7f1d1d; background: #fee2e2; }
 .badge.vistoria-na          { color: #6b7280; background: #f3f4f6; }
 

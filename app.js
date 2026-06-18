@@ -2764,27 +2764,94 @@ function buildAuditExport() {
   };
 }
 
+function vistoriaSevRank(st) {
+  return st === "CRÍTICO" ? 2 : st === "SOB OBS" ? 1 : 0;
+}
+
 function buildVistoriaExport() {
   const list = getFilteredVistorias();
-  const anomalyRows = list.flatMap((v) => (v.items || [])
-    .filter((it) => it.state !== "OK" || normalizeAttachments(it.photos).length)
-    .map((it) => [v.date || "", v.plate || "", String(v.equipment || ""), v.equipmentType || "", it.section, it.item, it.state, it.note || "", formatAttachmentLinks(it.photos)]));
+
+  // Resumo por vistoria
+  const resumoRows = list.map((v) => {
+    const s = scoreVistoria(v.items);
+    return [v.date || "", v.time || "", v.company || "", v.plate || "", String(v.equipment || ""), v.equipmentType || "", v.inspector || "", v.driver || "", v.location || "", s.penalty, v.result || "", s.ok, s.obs, s.crit];
+  });
+
+  // Pontos negativos (destaque) — críticos primeiro, depois sob observação
+  const negRows = list.flatMap((v) => (v.items || [])
+    .filter((it) => it.state !== "OK")
+    .map((it) => [it.state === "CRÍTICO" ? "🔴" : "🟡", it.state, v.date || "", v.plate || "", String(v.equipment || ""), v.equipmentType || "", it.section, it.item, it.note || "", formatAttachmentLinks(it.photos)]));
+  negRows.sort((a, b) => (vistoriaSevRank(b[1]) - vistoriaSevRank(a[1])) || (b[2] || "").localeCompare(a[2] || ""));
+
+  // Agrupar por viatura, por ordem cronológica
+  const byPlate = {};
+  for (const v of list) (byPlate[v.plate] = byPlate[v.plate] || []).push(v);
+  const chrono = (arr) => arr.sort((a, b) =>
+    (a.date || "").localeCompare(b.date || "") || (a.time || "").localeCompare(b.time || "") || (a.createdAt || "").localeCompare(b.createdAt || ""));
+
+  // Evolução: última vistoria vs anterior, ponto a ponto
+  const evoRows = [];
+  for (const arr of Object.values(byPlate)) {
+    chrono(arr);
+    if (arr.length < 2) continue;
+    const prev = arr[arr.length - 2];
+    const curr = arr[arr.length - 1];
+    const prevMap = {};
+    (prev.items || []).forEach((it) => { prevMap[it.item] = it; });
+    for (const it of (curr.items || [])) {
+      const p = prevMap[it.item];
+      if (!p) continue;
+      const pr = vistoriaSevRank(p.state);
+      const cr = vistoriaSevRank(it.state);
+      if (pr === 0 && cr === 0) continue; // sempre OK, nada a relatar
+      let tend;
+      if (cr > pr) tend = "🔴 ALERTA (piorou)";
+      else if (cr < pr) tend = "🟢 Ponto positivo (melhorou)";
+      else tend = "Mantém";
+      evoRows.push([curr.plate || "", String(curr.equipment || ""), it.section, it.item, prev.date || "", p.state, curr.date || "", it.state, tend]);
+    }
+  }
+  const tendOrder = (t) => (t.startsWith("🔴") ? 0 : t.startsWith("🟢") ? 1 : 2);
+  evoRows.sort((a, b) => tendOrder(a[8]) - tendOrder(b[8]) || (a[0] || "").localeCompare(b[0] || ""));
+
+  // Histórico por ponto (timeline completa dos pontos que alguma vez tiveram anomalia)
+  const histRows = [];
+  for (const arr of Object.values(byPlate)) {
+    chrono(arr);
+    const flagged = new Set();
+    arr.forEach((v) => (v.items || []).forEach((it) => { if (it.state !== "OK") flagged.add(it.item); }));
+    for (const v of arr) {
+      for (const it of (v.items || [])) {
+        if (!flagged.has(it.item)) continue;
+        histRows.push([v.plate || "", String(v.equipment || ""), v.date || "", it.section, it.item, it.state, it.note || ""]);
+      }
+    }
+  }
+  histRows.sort((a, b) => (a[0] || "").localeCompare(b[0] || "") || (a[4] || "").localeCompare(b[4] || "") || (a[2] || "").localeCompare(b[2] || ""));
+
   return {
     title: "Vistorias",
     fileName: `vistorias-${todayISO()}`,
     tables: [
       {
-        title: "Vistorias",
+        title: "Resumo vistorias",
         columns: ["Data", "Hora", "Empresa", "Matrícula", "Equip.", "Tipo equipamento", "Inspetor", "Motorista", "Local", "Pontuação", "Resultado", "Itens OK", "Observações", "Críticos"],
-        rows: list.map((v) => {
-          const s = scoreVistoria(v.items);
-          return [v.date || "", v.time || "", v.company || "", v.plate || "", String(v.equipment || ""), v.equipmentType || "", v.inspector || "", v.driver || "", v.location || "", s.penalty, v.result || "", s.ok, s.obs, s.crit];
-        })
+        rows: resumoRows
       },
       {
-        title: "Anomalias",
-        columns: ["Data", "Matrícula", "Equip.", "Tipo equipamento", "Secção", "Item", "Estado", "Observações", "Fotos (links)"],
-        rows: anomalyRows
+        title: "Pontos negativos",
+        columns: ["", "Estado", "Data", "Matrícula", "Equip.", "Tipo equipamento", "Secção", "Item", "Observações", "Fotos (links)"],
+        rows: negRows
+      },
+      {
+        title: "Evolução (última vs anterior)",
+        columns: ["Matrícula", "Equip.", "Secção", "Item", "Data anterior", "Estado anterior", "Data última", "Estado última", "Tendência"],
+        rows: evoRows
+      },
+      {
+        title: "Histórico por ponto",
+        columns: ["Matrícula", "Equip.", "Data", "Secção", "Item", "Estado", "Observações"],
+        rows: histRows
       }
     ]
   };

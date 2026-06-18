@@ -52,7 +52,8 @@ const icons = {
   paperclip: '<svg viewBox="0 0 24 24"><path d="m21.4 11.6-8.5 8.5a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 1 1-2.8-2.8l8.5-8.5"></path></svg>',
   x: '<svg viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>',
-  sort: '<svg viewBox="0 0 24 24"><path d="m3 8 4-4 4 4"></path><path d="M7 4v16"></path><path d="m21 16-4 4-4-4"></path><path d="M17 20V4"></path></svg>'
+  sort: '<svg viewBox="0 0 24 24"><path d="m3 8 4-4 4 4"></path><path d="M7 4v16"></path><path d="m21 16-4 4-4-4"></path><path d="M17 20V4"></path></svg>',
+  pencil: '<svg viewBox="0 0 24 24"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>'
 };
 
 let state = loadState();
@@ -140,6 +141,12 @@ document.addEventListener("click", async (event) => {
   if (action === "delete-vistoria") {
     await deleteVistoria(button.dataset.id);
   }
+  if (action === "edit-vistoria") {
+    state.selectedVistoriaId = button.dataset.id || state.selectedVistoriaId;
+    state.vistoriaSubView = "edit";
+    saveState();
+    render();
+  }
   if (action === "avaria-from-vistoria") {
     startAvariaFromVistoria(button.dataset.id, button.dataset.section, button.dataset.item);
   }
@@ -202,6 +209,10 @@ document.addEventListener("submit", async (event) => {
   if (form.dataset.form === "new-vistoria") {
     event.preventDefault();
     await handleNewVistoria(form);
+  }
+  if (form.dataset.form === "edit-vistoria") {
+    event.preventDefault();
+    await handleEditVistoria(form);
   }
 });
 
@@ -652,6 +663,7 @@ function renderVistoria() {
   if (sub === "new") body = renderVistoriaForm();
   else if (sub === "list") body = renderVistoriaList();
   else if (sub === "detail") body = renderVistoriaDetail();
+  else if (sub === "edit") body = renderVistoriaEdit();
   else body = renderVistoriaKpis();
   return `<section class="vistoria-view">${subnav}${body}</section>`;
 }
@@ -797,10 +809,105 @@ function renderVistoriaDetail() {
           }).join("")}
         </fieldset>`).join("")}
       <div class="form-actions">
+        <button class="primary-button" type="button" data-action="edit-vistoria" data-id="${escapeAttr(v.id)}"><span data-icon="pencil"></span><span>Editar</span></button>
         <button class="ghost-button" type="button" data-action="vistoria-subview" data-subview="list">Voltar à lista</button>
         <button class="danger-button" type="button" data-action="delete-vistoria" data-id="${escapeAttr(v.id)}"><span data-icon="trash"></span><span>Eliminar</span></button>
       </div>
     </div>`;
+}
+
+function renderVistoriaEdit() {
+  const v = state.vistorias.find((x) => String(x.id) === String(state.selectedVistoriaId));
+  if (!v) return `<div class="panel"><p class="empty-state">Vistoria não encontrada.</p></div>`;
+  const items = v.items || [];
+  const sections = [];
+  const sIndex = {};
+  items.forEach((it, idx) => {
+    if (!(it.section in sIndex)) { sIndex[it.section] = sections.length; sections.push({ name: it.section, rows: [] }); }
+    sections[sIndex[it.section]].rows.push({ it, idx });
+  });
+  return `
+    <section class="panel form-panel">
+      <div class="panel-header"><div><p class="eyebrow">Vistoria</p><h2>Editar vistoria — ${escapeHtml(v.plate || "-")} (Equip. ${escapeHtml(String(v.equipment || "-"))})</h2>
+        <p>${escapeHtml(v.equipmentType || "-")} · matrícula e tipo não são editáveis aqui.</p></div></div>
+      <form class="data-form" data-form="edit-vistoria">
+        <input type="hidden" name="id" value="${escapeAttr(v.id)}">
+        <div class="form-grid">
+          <label class="field"><span>Data</span><input type="date" name="date" value="${escapeAttr(v.date || "")}" required></label>
+          <label class="field"><span>Hora</span><input type="time" name="time" value="${escapeAttr(v.time || "")}"></label>
+          <label class="field"><span>Empresa</span><select name="company"><option value="" ${!v.company ? "selected" : ""}></option><option value="CPSA" ${v.company === "CPSA" ? "selected" : ""}>CPSA</option><option value="PTSA" ${v.company === "PTSA" ? "selected" : ""}>PTSA</option></select></label>
+          <label class="field"><span>Inspetor</span><input name="inspector" value="${escapeAttr(v.inspector || "")}"></label>
+          <label class="field"><span>Motorista</span><input name="driver" value="${escapeAttr(v.driver || "")}"></label>
+          <label class="field"><span>Local</span><input name="location" value="${escapeAttr(v.location || "")}"></label>
+        </div>
+        ${sections.map((sec) => `
+          <fieldset class="vistoria-section">
+            <legend>${escapeHtml(sec.name)}</legend>
+            ${sec.rows.map(({ it, idx }) => {
+              const photos = normalizeAttachments(it.photos);
+              return `<div class="vistoria-item" data-vi-index="${idx}">
+                <span class="vistoria-item__label">${escapeHtml(it.item)}</span>
+                <select class="vistoria-item__state" data-vi-state>${VISTORIA_STATES.map((st) => `<option value="${escapeAttr(st)}" ${it.state === st ? "selected" : ""}>${escapeHtml(st)}</option>`).join("")}</select>
+                <input class="vistoria-item__note" data-vi-note value="${escapeAttr(it.note || "")}" placeholder="Observações">
+                <label class="vistoria-item__photo${photos.length ? " has-photos" : ""}" title="Adicionar foto (opcional)"><span data-icon="paperclip"></span><input type="file" data-vi-photo accept="image/*" multiple hidden></label>
+                ${photos.length ? `<div class="vistoria-item__photos">${photos.map(renderAttachmentItem).join("")}</div>` : ""}
+              </div>`;
+            }).join("")}
+          </fieldset>`).join("")}
+        <div class="form-actions">
+          <button class="primary-button" type="submit"><span data-icon="save"></span><span>Guardar alterações</span></button>
+          <button class="ghost-button" type="button" data-action="select-vistoria" data-id="${escapeAttr(v.id)}">Cancelar</button>
+        </div>
+      </form>
+    </section>`;
+}
+
+async function handleEditVistoria(form) {
+  const id = form.querySelector('[name="id"]')?.value;
+  const v = state.vistorias.find((x) => String(x.id) === String(id));
+  if (!v) return;
+  const data = new FormData(form);
+  v.date = String(data.get("date") || v.date);
+  v.time = String(data.get("time") || "");
+  v.company = String(data.get("company") || "");
+  v.inspector = String(data.get("inspector") || "").trim();
+  v.driver = String(data.get("driver") || "").trim();
+  v.location = String(data.get("location") || "").trim();
+
+  let photoWarning = false;
+  const rows = Array.from(form.querySelectorAll(".vistoria-item"));
+  for (const row of rows) {
+    const idx = Number(row.dataset.viIndex);
+    const it = v.items[idx];
+    if (!it) continue;
+    it.state = row.querySelector("[data-vi-state]")?.value || it.state;
+    it.note = (row.querySelector("[data-vi-note]")?.value || "").trim();
+    const files = row.querySelector("[data-vi-photo]")?.files;
+    if (files && files.length) {
+      try {
+        const uploaded = await uploadBreakdownAttachments(`vistorias/${v.id}/${idx}`, files);
+        if (uploaded.length) it.photos = [...normalizeAttachments(it.photos), ...uploaded];
+      } catch (error) {
+        console.error("Falha ao carregar fotos da vistoria:", error);
+        photoWarning = true;
+      }
+    }
+  }
+
+  const score = scoreVistoria(v.items);
+  v.score = score.penalty;
+  v.result = vistoriaResult(v.items);
+  if (photoWarning) showToast("Algumas fotos não foram carregadas (alterações guardadas na mesma).");
+
+  state.vistoriaSubView = "detail";
+  const auditEvent = logVistoriaAudit(v, "Vistoria atualizada");
+  saveState();
+  showToast(`Vistoria atualizada — ${v.result}.`);
+  render();
+  await persistRemoteSafely(async () => {
+    await persistVistoriaRemote(v);
+    await persistAuditRemote(auditEvent);
+  });
 }
 
 function vistoriaResultBadge(result) {

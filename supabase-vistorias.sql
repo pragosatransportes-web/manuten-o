@@ -40,3 +40,26 @@ alter table public.avarias_breakdowns add column if not exists vistoria_id text;
 alter table public.avarias_breakdowns add column if not exists vistoria_item text;
 alter table public.avarias_breakdowns add column if not exists vistoria_section text;
 alter table public.avarias_breakdowns add column if not exists vistoria_date date;
+
+-- Tabela de reuniões (sessões de reunião de manutenção).
+create table if not exists public.avarias_reunioes (
+  id text primary key,
+  started_at timestamptz,
+  ended_at timestamptz,
+  duration_min integer default 0,
+  operator text,
+  events jsonb default '[]'::jsonb,
+  created_at timestamptz default now()
+);
+
+alter table public.avarias_reunioes enable row level security;
+
+drop policy if exists "avarias_reunioes_all" on public.avarias_reunioes;
+create policy "avarias_reunioes_all"
+  on public.avarias_reunioes
+  for all
+  to anon, authenticated
+  using (true)
+  with check (true);
+
+alter publication supabase_realtime add table public.avarias_reunioes;

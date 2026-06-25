@@ -66,6 +66,8 @@ document.addEventListener("click", async (event) => {
   if (view) {
     // Abandonar uma ligação vistoria→avaria pendente se sair sem registar a avaria.
     if (view !== "new") state.avariaFromVistoria = null;
+    // Ao clicar no separador Reunião: workspace se houver reunião a decorrer, senão o ecrã inicial.
+    if (view === "meeting") state.meetingView = getActiveMeeting() ? "work" : "home";
     state.currentView = view;
     saveState();
     render();
@@ -105,6 +107,31 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "select-breakdown") {
     state.selectedId = button.dataset.id;
+    state.currentView = "meeting";
+    state.meetingView = "work";
+    saveState();
+    render();
+  }
+  if (action === "open-meeting") {
+    openMeeting();
+  }
+  if (action === "close-meeting") {
+    await closeMeeting();
+  }
+  if (action === "meeting-consult") {
+    state.meetingView = "consult";
+    state.currentView = "meeting";
+    saveState();
+    render();
+  }
+  if (action === "meeting-home") {
+    state.meetingView = "home";
+    saveState();
+    render();
+  }
+  if (action === "select-meeting") {
+    state.selectedMeetingId = button.dataset.id;
+    state.meetingView = "report";
     state.currentView = "meeting";
     saveState();
     render();
@@ -252,6 +279,10 @@ function makeInitialState() {
     vistoriaSubView: "kpis",
     selectedVistoriaId: "",
     avariaFromVistoria: null,
+    meetingView: "home",
+    activeMeetingId: "",
+    selectedMeetingId: "",
+    meetings: [],
     sourceGeneratedAt: seed.generatedAt || "",
     fleet: seed.fleet || [],
     vistorias: [],
@@ -379,18 +410,19 @@ function updateSyncStatus(label, className, ready) {
 }
 
 async function loadRemoteState() {
-  const [fleetResult, breakdownsResult, snapshotsResult, auditResult, vistoriasResult] = await Promise.all([
+  const [fleetResult, breakdownsResult, snapshotsResult, auditResult, vistoriasResult, meetingsResult] = await Promise.all([
     remoteClient.from("avarias_fleet").select("*").order("equipment", { ascending: true }),
     remoteClient.from("avarias_breakdowns").select("*").order("updated_at", { ascending: false }),
     remoteClient.from("avarias_snapshots").select("*").order("date", { ascending: true }),
     remoteClient.from("avarias_audit_events").select("*").order("at", { ascending: false }),
-    remoteClient.from("avarias_vistorias").select("*").order("date", { ascending: false })
+    remoteClient.from("avarias_vistorias").select("*").order("date", { ascending: false }),
+    remoteClient.from("avarias_reunioes").select("*").order("started_at", { ascending: false })
   ]);
 
   [fleetResult, breakdownsResult, snapshotsResult, auditResult].forEach((result) => {
     if (result.error) throw result.error;
   });
-  // a tabela de vistorias pode ainda não existir — ignora o erro silenciosamente
+  // as tabelas de vistorias/reuniões podem ainda não existir — ignora o erro silenciosamente
 
   if (!fleetResult.data.length && !breakdownsResult.data.length) {
     await seedRemoteDatabase();
@@ -409,6 +441,7 @@ async function loadRemoteState() {
     selectedId: selectedExists ? previousSelectedId : (sortedBreakdowns(breakdowns.filter((item) => item.status !== "Concluido"))[0]?.id || breakdowns[0]?.id || ""),
     fleet: fleetResult.data.map(dbFleetToApp),
     vistorias: vistoriasResult.error ? (state.vistorias || []) : vistoriasResult.data.map(dbVistoriaToApp),
+    meetings: meetingsResult.error ? (state.meetings || []) : meetingsResult.data.map(dbMeetingToApp),
     breakdowns,
     snapshots: snapshotsResult.data.map(dbSnapshotToApp),
     audit: auditResult.data.length ? auditResult.data.map(dbAuditToApp) : buildAudit(breakdowns),
@@ -451,6 +484,9 @@ function subscribeRemoteChanges() {
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "avarias_vistorias" }, (payload) => {
       applyRemoteRow(payload, "vistorias", dbVistoriaToApp);
+    })
+    .on("postgres_changes", { event: "*", schema: "public", table: "avarias_reunioes" }, (payload) => {
+      applyRemoteRow(payload, "meetings", dbMeetingToApp);
     })
     .subscribe();
 }
@@ -1320,6 +1356,103 @@ function dbAuditToApp(row) {
   };
 }
 
+// --- Reuniões ---
+
+function appMeetingToDb(item) {
+  return {
+    id: String(item.id),
+    started_at: item.startedAt || null,
+    ended_at: item.endedAt || null,
+    duration_min: item.durationMin || 0,
+    operator: item.operator || null,
+    events: item.events || []
+  };
+}
+
+function dbMeetingToApp(row) {
+  let events = row.events;
+  if (typeof events === "string") {
+    try { events = JSON.parse(events); } catch { events = []; }
+  }
+  return {
+    id: String(row.id),
+    startedAt: row.started_at || "",
+    endedAt: row.ended_at || "",
+    durationMin: Number(row.duration_min) || 0,
+    operator: row.operator || "",
+    events: Array.isArray(events) ? events : []
+  };
+}
+
+async function persistMeetingRemote(meeting) {
+  if (!remoteStatus.ready || !remoteClient || !meeting) return;
+  const { error } = await remoteClient
+    .from("avarias_reunioes")
+    .upsert(appMeetingToDb(meeting), { onConflict: "id" });
+  if (error) throw error;
+}
+
+function generateMeetingId() {
+  const stamp = new Date().toISOString().replace(/\D/g, "").slice(2, 14);
+  return `RU${stamp}${Math.floor(Math.random() * 90 + 10)}`;
+}
+
+function getActiveMeeting() {
+  if (!state.activeMeetingId) return null;
+  return state.meetings.find((m) => m.id === state.activeMeetingId && !m.endedAt) || null;
+}
+
+function openMeeting() {
+  if (getActiveMeeting()) { state.meetingView = "work"; saveState(); render(); return; }
+  const meeting = {
+    id: generateMeetingId(),
+    startedAt: new Date().toISOString(),
+    endedAt: "",
+    durationMin: 0,
+    operator: remoteConfig.operator || "Utilizador",
+    events: []
+  };
+  state.meetings.unshift(meeting);
+  state.activeMeetingId = meeting.id;
+  state.meetingView = "work";
+  saveState();
+  showToast("Reunião iniciada.");
+  render();
+  persistRemoteSafely(() => persistMeetingRemote(meeting));
+}
+
+async function closeMeeting() {
+  const meeting = getActiveMeeting();
+  if (!meeting) return;
+  if (!window.confirm("Encerrar a reunião? Vai ser gerado o relatório com o resumo das atualizações.")) return;
+  meeting.endedAt = new Date().toISOString();
+  meeting.durationMin = Math.max(1, Math.round((new Date(meeting.endedAt) - new Date(meeting.startedAt)) / 60000));
+  state.activeMeetingId = "";
+  state.selectedMeetingId = meeting.id;
+  state.meetingView = "report";
+  saveState();
+  showToast(`Reunião encerrada (${meeting.durationMin} min).`);
+  render();
+  await persistRemoteSafely(() => persistMeetingRemote(meeting));
+}
+
+// Regista uma ação na reunião a decorrer (se houver). type: "new" | "update" | "close" | "reopen"
+function recordMeetingEvent(type, breakdown, summary) {
+  const meeting = getActiveMeeting();
+  if (!meeting || !breakdown) return;
+  meeting.events.push({
+    at: new Date().toISOString(),
+    type,
+    breakdownId: breakdown.id,
+    equipment: breakdown.equipment,
+    plate: breakdown.plate,
+    status: breakdown.status,
+    summary: summary || ""
+  });
+  saveState();
+  persistRemoteSafely(() => persistMeetingRemote(meeting));
+}
+
 function render(focusSelector = "") {
   const metrics = getMetrics();
   document.querySelector("#data-line").textContent =
@@ -1438,6 +1571,49 @@ function renderDashboardCard(label, value, detail, filterData) {
 }
 
 function renderMeeting() {
+  const active = getActiveMeeting();
+  if (state.meetingView === "consult") return renderMeetingConsult();
+  if (state.meetingView === "report") return renderMeetingReport();
+  if (state.meetingView === "work" || active) return renderMeetingWork(active);
+  return renderMeetingHome();
+}
+
+function renderMeetingHome() {
+  const past = [...state.meetings].filter((m) => m.endedAt).length;
+  return `
+    <section class="meeting-home">
+      <div class="panel meeting-hero">
+        <p class="eyebrow">Reunião de manutenção</p>
+        <h2>Gerir reunião</h2>
+        <p>Abra uma reunião para registar as ações tomadas (atualizações e novas avarias) e gerar um relatório no fim.</p>
+        <div class="meeting-home__actions">
+          <button class="primary-button" type="button" data-action="open-meeting"><span data-icon="plus"></span><span>Abrir reunião</span></button>
+          <button class="ghost-button" type="button" data-action="meeting-consult"><span data-icon="eye"></span><span>Consultar reuniões${past ? ` (${past})` : ""}</span></button>
+        </div>
+      </div>
+    </section>`;
+}
+
+function renderMeetingBanner(active) {
+  const since = active ? formatDateTime(active.startedAt) : "";
+  const mins = active ? Math.max(0, Math.round((Date.now() - new Date(active.startedAt)) / 60000)) : 0;
+  return `
+    <div class="meeting-banner${active ? " is-active" : ""}">
+      <div>
+        ${active
+          ? `<strong>🟢 Reunião a decorrer</strong><span> · início ${escapeHtml(since)} · ${active.events.length} ações registadas</span>`
+          : `<strong>Sem reunião a decorrer</strong><span> · abra uma reunião para registar as ações</span>`}
+      </div>
+      <div class="button-row">
+        <button class="ghost-button" type="button" data-action="meeting-consult"><span data-icon="eye"></span><span>Consultar</span></button>
+        ${active
+          ? `<button class="danger-button" type="button" data-action="close-meeting"><span data-icon="check"></span><span>Encerrar reunião</span></button>`
+          : `<button class="primary-button" type="button" data-action="open-meeting"><span data-icon="plus"></span><span>Abrir reunião</span></button>`}
+      </div>
+    </div>`;
+}
+
+function renderMeetingWork(active) {
   const metrics = getMetrics();
   const list = getFilteredBreakdowns(true);
   let selected = state.breakdowns.find((item) => item.id === state.selectedId);
@@ -1447,6 +1623,7 @@ function renderMeeting() {
   }
 
   return `
+    ${renderMeetingBanner(active)}
     ${renderMetrics(metrics)}
     <section class="meeting-layout">
       <div class="panel">
@@ -1471,6 +1648,91 @@ function renderMeeting() {
       </aside>
     </section>
   `;
+}
+
+function renderMeetingConsult() {
+  const past = [...state.meetings].sort((a, b) => (b.startedAt || "").localeCompare(a.startedAt || ""));
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <div><p class="eyebrow">Reuniões</p><h2>Consultar reuniões</h2><p>${past.length} reuniões registadas</p></div>
+        <button class="ghost-button" type="button" data-action="meeting-home"><span>Voltar</span></button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Data</th><th>Início</th><th>Duração</th><th>Estado</th><th>Ações</th><th>Operador</th><th></th></tr></thead>
+          <tbody>
+            ${past.length ? past.map((m) => {
+              const ended = !!m.endedAt;
+              const counts = meetingCounts(m);
+              return `<tr>
+                <td><strong>${formatDate((m.startedAt || "").slice(0, 10))}</strong></td>
+                <td>${escapeHtml(formatTimeOnly(m.startedAt))}</td>
+                <td>${ended ? `${m.durationMin} min` : "—"}</td>
+                <td>${ended ? '<span class="badge concluido">Encerrada</span>' : '<span class="badge circula">A decorrer</span>'}</td>
+                <td>${counts.novas} novas · ${counts.updates} atualizações</td>
+                <td>${escapeHtml(m.operator || "-")}</td>
+                <td><button class="icon-button" type="button" data-action="select-meeting" data-id="${escapeAttr(m.id)}" title="Ver relatório"><span data-icon="eye"></span></button></td>
+              </tr>`;
+            }).join("") : `<tr><td colspan="7"><p class="empty-state">Ainda não há reuniões registadas.</p></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+function meetingCounts(m) {
+  const ev = m.events || [];
+  return {
+    novas: ev.filter((e) => e.type === "new").length,
+    updates: ev.filter((e) => e.type === "update" || e.type === "close" || e.type === "reopen").length
+  };
+}
+
+function meetingEventLabel(type) {
+  return type === "new" ? "Nova avaria"
+    : type === "close" ? "Concluída"
+    : type === "reopen" ? "Reaberta"
+    : "Atualização";
+}
+
+function renderMeetingReport() {
+  const m = state.meetings.find((x) => String(x.id) === String(state.selectedMeetingId));
+  if (!m) return `<div class="panel"><p class="empty-state">Reunião não encontrada.</p></div>`;
+  const ev = m.events || [];
+  const novas = ev.filter((e) => e.type === "new");
+  const updates = ev.filter((e) => e.type !== "new");
+  const rowsHtml = (arr) => arr.length ? arr.map((e) => `
+    <article class="timeline-item">
+      <time>${formatTimeOnly(e.at)} · Equip. ${escapeHtml(String(e.equipment || "-"))} · ${escapeHtml(e.plate || "-")} · ${escapeHtml(meetingEventLabel(e.type))}</time>
+      <p>${escapeHtml(e.summary || "-")}</p>
+    </article>`).join("") : '<p class="empty-state">Sem registos.</p>';
+
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <div><p class="eyebrow">Relatório de reunião</p><h2>${formatDate((m.startedAt || "").slice(0, 10))}</h2>
+          <p>${escapeHtml(formatTimeOnly(m.startedAt))}${m.endedAt ? ` – ${escapeHtml(formatTimeOnly(m.endedAt))}` : ""} · ${m.endedAt ? `${m.durationMin} min` : "a decorrer"} · ${escapeHtml(m.operator || "-")}</p></div>
+        <button class="ghost-button" type="button" data-action="meeting-consult"><span>Voltar à lista</span></button>
+      </div>
+      <div class="metrics-grid" style="padding:14px 16px">
+        <article class="metric-card"><span>Duração</span><strong>${m.endedAt ? `${m.durationMin}m` : "—"}</strong><em>tempo da reunião</em></article>
+        <article class="metric-card"><span>Novas avarias</span><strong>${novas.length}</strong><em>criadas na reunião</em></article>
+        <article class="metric-card"><span>Atualizações</span><strong>${updates.length}</strong><em>em avarias abertas</em></article>
+        <article class="metric-card"><span>Total de ações</span><strong>${ev.length}</strong><em>registadas</em></article>
+      </div>
+      <div class="panel-header"><div><h3>Novas avarias (${novas.length})</h3></div></div>
+      <div class="timeline" style="padding:0 16px 8px">${rowsHtml(novas)}</div>
+      <div class="panel-header"><div><h3>Atualizações em avarias abertas (${updates.length})</h3></div></div>
+      <div class="timeline" style="padding:0 16px 16px">${rowsHtml(updates)}</div>
+    </section>`;
+}
+
+function formatTimeOnly(value) {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "-";
+  return new Intl.DateTimeFormat("pt-PT", { hour: "2-digit", minute: "2-digit" }).format(d);
 }
 
 function renderMetrics(metrics) {
@@ -2237,6 +2499,8 @@ async function handleQuickUpdate(form, intent) {
     trelloNote = historyNote;
   }
 
+  recordMeetingEvent(intent === "close" ? "close" : intent === "reopen" ? "reopen" : "update", breakdown, trelloNote || (changes.length ? changes.join("; ") : "Atualização"));
+
   saveState();
   showToast(intent === "close" ? "Avaria concluída." : intent === "reopen" ? "Ocorrência reaberta." : "Atualização guardada.");
   render();
@@ -2355,6 +2619,7 @@ async function handleNewBreakdown(form) {
   state.currentView = "meeting";
   const originNote = breakdown.vistoriaId ? ` | Origem: vistoria ${formatDate(breakdown.vistoriaDate)} (${breakdown.vistoriaItem})` : "";
   const auditEvent = logAudit(breakdown, "Nova avaria", `${attachmentNote ? `${description} | Anexos: ${attachmentNote}` : description}${originNote}`);
+  recordMeetingEvent("new", breakdown, description);
   saveState();
   showToast("Nova avaria criada.");
   render();
@@ -2373,6 +2638,7 @@ async function closeBreakdown(id) {
   breakdown.status = "Concluido";
   appendHistory(breakdown, "Concluido", "Concluido pela lista", todayISO());
   const auditEvent = logAudit(breakdown, "Concluída", "Concluido pela lista");
+  recordMeetingEvent("close", breakdown, "Concluída pela lista");
   saveState();
   showToast("Avaria concluída.");
   render();

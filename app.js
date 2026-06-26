@@ -3080,17 +3080,18 @@ function meetingReportText(meeting) {
   const ev = meeting.events || [];
   const novas = ev.filter((e) => e.type === "new");
   const updates = ev.filter((e) => e.type !== "new");
+  const heading = (t) => `${t}\n${"─".repeat(Math.min(60, t.length))}`;
   const lines = [];
-  lines.push(`RELATÓRIO DE REUNIÃO — ${formatDate((meeting.startedAt || "").slice(0, 10))}`);
-  lines.push(`Início: ${formatTimeOnly(meeting.startedAt)}${meeting.endedAt ? ` | Fim: ${formatTimeOnly(meeting.endedAt)} | Duração: ${meeting.durationMin} min` : " (a decorrer)"}`);
+  lines.push(heading(`Relatório de Reunião — ${formatDate((meeting.startedAt || "").slice(0, 10))}`));
+  if (meeting.endedAt) lines.push(`Duração: ${meeting.durationMin} min`);
   lines.push(`Operador: ${meeting.operator || "-"}`);
   lines.push("");
-  lines.push(`NOVAS AVARIAS (${novas.length})`);
-  if (novas.length) novas.forEach((e) => lines.push(`- ${formatTimeOnly(e.at)} · Equip. ${e.equipment || "-"} · ${e.plate || "-"}: ${e.summary || "-"}`));
+  lines.push(heading(`Novas Avarias (${novas.length})`));
+  if (novas.length) novas.forEach((e) => lines.push(`- Equip. ${e.equipment || "-"} · ${e.plate || "-"}: ${e.summary || "-"}`));
   else lines.push("- (nenhuma)");
   lines.push("");
-  lines.push(`ATUALIZAÇÕES EM AVARIAS ABERTAS (${updates.length})`);
-  if (updates.length) updates.forEach((e) => lines.push(`- ${formatTimeOnly(e.at)} · Equip. ${e.equipment || "-"} · ${e.plate || "-"} · ${meetingEventLabel(e.type)}: ${e.summary || "-"}`));
+  lines.push(heading(`Atualizações em Avarias Abertas (${updates.length})`));
+  if (updates.length) updates.forEach((e) => lines.push(`- Equip. ${e.equipment || "-"} · ${e.plate || "-"} · ${meetingEventLabel(e.type)}: ${e.summary || "-"}`));
   else lines.push("- (nenhuma)");
   return lines.join("\n");
 }
@@ -3140,7 +3141,7 @@ async function emailMeetingReport(id) {
   const meeting = getMeetingById(id);
   if (!meeting) return;
   const dia = formatDate((meeting.startedAt || "").slice(0, 10));
-  const subject = `Relatório de reunião — ${dia}`;
+  const subject = `Relatório de Reunião Manutenção Logística - ${dia}`;
   const emailCfg = remoteConfig.email || {};
 
   // Envio automático via Edge Function do Supabase (se configurado)

@@ -18,6 +18,6 @@ window.AVARIAS_REMOTE_CONFIG = {
     // Enquanto estiver false, o botão de e-mail abre o cliente de correio (mailto).
     enabled: false,
     functionName: "send-meeting-report",
-    to: "" // destinatário(s) pré-preenchido(s), separados por vírgula (opcional)
+    to: "manutencao@pragosa.pt, logistica@pragosa.pt" // destinatários por defeito
   }
 };

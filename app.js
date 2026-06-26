@@ -136,6 +136,12 @@ document.addEventListener("click", async (event) => {
     saveState();
     render();
   }
+  if (action === "export-meeting") {
+    exportMeetingReportExcel(button.dataset.id);
+  }
+  if (action === "email-meeting") {
+    emailMeetingReport(button.dataset.id);
+  }
   if (action === "close-breakdown") {
     await closeBreakdown(button.dataset.id);
   }
@@ -1713,7 +1719,11 @@ function renderMeetingReport() {
       <div class="panel-header">
         <div><p class="eyebrow">Relatório de reunião</p><h2>${formatDate((m.startedAt || "").slice(0, 10))}</h2>
           <p>${escapeHtml(formatTimeOnly(m.startedAt))}${m.endedAt ? ` – ${escapeHtml(formatTimeOnly(m.endedAt))}` : ""} · ${m.endedAt ? `${m.durationMin} min` : "a decorrer"} · ${escapeHtml(m.operator || "-")}</p></div>
-        <button class="ghost-button" type="button" data-action="meeting-consult"><span>Voltar à lista</span></button>
+        <div class="button-row">
+          <button class="primary-button" type="button" data-action="export-meeting" data-id="${escapeAttr(m.id)}"><span data-icon="download"></span><span>Excel</span></button>
+          <button class="ghost-button" type="button" data-action="email-meeting" data-id="${escapeAttr(m.id)}"><span data-icon="paperclip"></span><span>Enviar por e-mail</span></button>
+          <button class="ghost-button" type="button" data-action="meeting-consult"><span>Voltar à lista</span></button>
+        </div>
       </div>
       <div class="metrics-grid" style="padding:14px 16px">
         <article class="metric-card"><span>Duração</span><strong>${m.endedAt ? `${m.durationMin}m` : "—"}</strong><em>tempo da reunião</em></article>
@@ -2981,8 +2991,10 @@ function setFilter(name, value) {
 }
 
 function exportActivePanelExcel() {
-  const workbook = buildActivePanelWorkbook();
+  downloadWorkbook(buildActivePanelWorkbook());
+}
 
+function downloadWorkbook(workbook) {
   if (window.XLSX) {
     const xlsxWorkbook = XLSX.utils.book_new();
     const usedNames = new Set();
@@ -3015,6 +3027,82 @@ function exportActivePanelExcel() {
   anchor.click();
   URL.revokeObjectURL(url);
   showToast("Excel preparado.");
+}
+
+function getMeetingById(id) {
+  return state.meetings.find((m) => String(m.id) === String(id));
+}
+
+function buildMeetingReportWorkbook(meeting) {
+  const ev = meeting.events || [];
+  const novas = ev.filter((e) => e.type === "new");
+  const updates = ev.filter((e) => e.type !== "new");
+  const dia = formatDate((meeting.startedAt || "").slice(0, 10));
+  return {
+    title: "Relatório de reunião",
+    fileName: `reuniao-${(meeting.startedAt || "").slice(0, 10)}`,
+    tables: [
+      {
+        title: "Resumo",
+        columns: ["Campo", "Valor"],
+        rows: [
+          ["Data", dia],
+          ["Início", formatTimeOnly(meeting.startedAt)],
+          ["Fim", meeting.endedAt ? formatTimeOnly(meeting.endedAt) : "—"],
+          ["Duração (min)", meeting.endedAt ? meeting.durationMin : "—"],
+          ["Operador", meeting.operator || "-"],
+          ["Novas avarias", novas.length],
+          ["Atualizações", updates.length],
+          ["Total de ações", ev.length]
+        ]
+      },
+      {
+        title: "Novas avarias",
+        columns: ["Hora", "Equip.", "Matrícula", "Descrição"],
+        rows: novas.map((e) => [formatTimeOnly(e.at), String(e.equipment || ""), e.plate || "", e.summary || ""])
+      },
+      {
+        title: "Atualizações",
+        columns: ["Hora", "Equip.", "Matrícula", "Ação", "Resumo"],
+        rows: updates.map((e) => [formatTimeOnly(e.at), String(e.equipment || ""), e.plate || "", meetingEventLabel(e.type), e.summary || ""])
+      }
+    ]
+  };
+}
+
+function exportMeetingReportExcel(id) {
+  const meeting = getMeetingById(id);
+  if (!meeting) return;
+  downloadWorkbook(buildMeetingReportWorkbook(meeting));
+}
+
+function meetingReportText(meeting) {
+  const ev = meeting.events || [];
+  const novas = ev.filter((e) => e.type === "new");
+  const updates = ev.filter((e) => e.type !== "new");
+  const lines = [];
+  lines.push(`RELATÓRIO DE REUNIÃO — ${formatDate((meeting.startedAt || "").slice(0, 10))}`);
+  lines.push(`Início: ${formatTimeOnly(meeting.startedAt)}${meeting.endedAt ? ` | Fim: ${formatTimeOnly(meeting.endedAt)} | Duração: ${meeting.durationMin} min` : " (a decorrer)"}`);
+  lines.push(`Operador: ${meeting.operator || "-"}`);
+  lines.push("");
+  lines.push(`NOVAS AVARIAS (${novas.length})`);
+  if (novas.length) novas.forEach((e) => lines.push(`- ${formatTimeOnly(e.at)} · Equip. ${e.equipment || "-"} · ${e.plate || "-"}: ${e.summary || "-"}`));
+  else lines.push("- (nenhuma)");
+  lines.push("");
+  lines.push(`ATUALIZAÇÕES EM AVARIAS ABERTAS (${updates.length})`);
+  if (updates.length) updates.forEach((e) => lines.push(`- ${formatTimeOnly(e.at)} · Equip. ${e.equipment || "-"} · ${e.plate || "-"} · ${meetingEventLabel(e.type)}: ${e.summary || "-"}`));
+  else lines.push("- (nenhuma)");
+  return lines.join("\n");
+}
+
+function emailMeetingReport(id) {
+  const meeting = getMeetingById(id);
+  if (!meeting) return;
+  const subject = `Relatório de reunião — ${formatDate((meeting.startedAt || "").slice(0, 10))}`;
+  const body = meetingReportText(meeting);
+  const href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  window.location.href = href;
+  showToast("A abrir o e-mail…");
 }
 
 function sanitizeSheetName(name) {

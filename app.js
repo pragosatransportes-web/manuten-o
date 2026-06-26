@@ -3095,12 +3095,88 @@ function meetingReportText(meeting) {
   return lines.join("\n");
 }
 
-function emailMeetingReport(id) {
+function workbookToXlsxBase64(workbook) {
+  if (!window.XLSX) return "";
+  const x = XLSX.utils.book_new();
+  const used = new Set();
+  workbook.tables.forEach((table, index) => {
+    const sheet = XLSX.utils.aoa_to_sheet([table.columns, ...table.rows.map((r) => r.map((c) => c ?? ""))]);
+    let name = sanitizeSheetName(table.title || `Folha${index + 1}`);
+    while (used.has(name)) name = sanitizeSheetName(`${name.slice(0, 28)}_${index + 1}`);
+    used.add(name);
+    XLSX.utils.book_append_sheet(x, sheet, name);
+  });
+  return XLSX.write(x, { type: "base64", bookType: "xlsx" });
+}
+
+function meetingReportHtml(meeting) {
+  const ev = meeting.events || [];
+  const novas = ev.filter((e) => e.type === "new");
+  const updates = ev.filter((e) => e.type !== "new");
+  const rows = (arr) => arr.length
+    ? arr.map((e) => `<tr><td>${escapeHtml(formatTimeOnly(e.at))}</td><td>${escapeHtml(String(e.equipment || "-"))}</td><td>${escapeHtml(e.plate || "-")}</td><td>${escapeHtml(meetingEventLabel(e.type))}</td><td>${escapeHtml(e.summary || "-")}</td></tr>`).join("")
+    : `<tr><td colspan="5">(nenhuma)</td></tr>`;
+  return `
+    <div style="font-family:Arial,sans-serif;color:#111827">
+      <h2 style="margin:0 0 4px">Relatório de reunião — ${escapeHtml(formatDate((meeting.startedAt || "").slice(0, 10)))}</h2>
+      <p style="color:#6b7280;margin:0 0 12px">
+        ${escapeHtml(formatTimeOnly(meeting.startedAt))}${meeting.endedAt ? ` – ${escapeHtml(formatTimeOnly(meeting.endedAt))} · ${meeting.durationMin} min` : " (a decorrer)"} · ${escapeHtml(meeting.operator || "-")}
+      </p>
+      <p><strong>${novas.length}</strong> novas avarias · <strong>${updates.length}</strong> atualizações · <strong>${ev.length}</strong> ações</p>
+      <h3 style="margin:14px 0 6px">Novas avarias (${novas.length})</h3>
+      <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#e8f3f1"><th>Hora</th><th>Equip.</th><th>Matrícula</th><th>Ação</th><th>Resumo</th></tr></thead>
+        <tbody>${rows(novas)}</tbody>
+      </table>
+      <h3 style="margin:14px 0 6px">Atualizações em avarias abertas (${updates.length})</h3>
+      <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#e8f3f1"><th>Hora</th><th>Equip.</th><th>Matrícula</th><th>Ação</th><th>Resumo</th></tr></thead>
+        <tbody>${rows(updates)}</tbody>
+      </table>
+    </div>`;
+}
+
+async function emailMeetingReport(id) {
   const meeting = getMeetingById(id);
   if (!meeting) return;
-  const subject = `Relatório de reunião — ${formatDate((meeting.startedAt || "").slice(0, 10))}`;
-  const body = meetingReportText(meeting);
-  const href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  const dia = formatDate((meeting.startedAt || "").slice(0, 10));
+  const subject = `Relatório de reunião — ${dia}`;
+  const emailCfg = remoteConfig.email || {};
+
+  // Envio automático via Edge Function do Supabase (se configurado)
+  if (emailCfg.enabled && remoteConfig.supabaseUrl) {
+    const to = window.prompt("Enviar relatório para (e-mail, separar vários por vírgula):", emailCfg.to || "");
+    if (!to) return;
+    try {
+      showToast("A enviar e-mail…");
+      const fileBase64 = workbookToXlsxBase64(buildMeetingReportWorkbook(meeting));
+      const res = await fetch(`${remoteConfig.supabaseUrl}/functions/v1/${emailCfg.functionName || "send-meeting-report"}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: remoteConfig.supabaseAnonKey || "",
+          Authorization: `Bearer ${remoteConfig.supabaseAnonKey || ""}`
+        },
+        body: JSON.stringify({
+          to,
+          subject,
+          html: meetingReportHtml(meeting),
+          filename: `reuniao-${(meeting.startedAt || "").slice(0, 10)}.xlsx`,
+          fileBase64
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      showToast("E-mail enviado.");
+      return;
+    } catch (error) {
+      console.error("Falha no envio automático:", error);
+      showToast(`Falha no envio automático (${formatRemoteError(error)}) — a abrir o e-mail manual.`);
+    }
+  }
+
+  // Recurso: abrir o cliente de e-mail (mailto)
+  const href = `mailto:${encodeURIComponent(emailCfg.to || "")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(meetingReportText(meeting))}`;
   window.location.href = href;
   showToast("A abrir o e-mail…");
 }

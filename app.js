@@ -145,6 +145,11 @@ document.addEventListener("click", async (event) => {
   if (action === "close-breakdown") {
     await closeBreakdown(button.dataset.id);
   }
+  if (action === "dashboard-date-tab") {
+    state.dashboardDateTab = button.dataset.field;
+    saveState();
+    render();
+  }
   if (action === "toggle-breakdown-sort") {
     state.breakdownsSort = state.breakdownsSort === "desc" ? "asc" : "desc";
     saveState();
@@ -289,6 +294,7 @@ function makeInitialState() {
     activeMeetingId: "",
     selectedMeetingId: "",
     meetings: [],
+    dashboardDateTab: "inspectionAt",
     sourceGeneratedAt: seed.generatedAt || "",
     fleet: seed.fleet || [],
     vistorias: [],
@@ -1500,9 +1506,23 @@ function render(focusSelector = "") {
   }
 }
 
+const DASHBOARD_DATE_TABS = [
+  ["inspectionAt", "Inspeção"],
+  ["tachographAt", "Aferição tacógrafo"],
+  ["compressorReviewAt", "Revisão compressor"],
+  ["wheelHubReviewAt", "Cubos de roda"]
+];
+
 function renderDashboard() {
   const management = getManagementMetrics();
-  const upcoming = getFleetDateAlerts().slice(0, 12);
+  const alerts = getFleetDateAlerts();
+  const activeTab = DASHBOARD_DATE_TABS.some(([f]) => f === state.dashboardDateTab) ? state.dashboardDateTab : "inspectionAt";
+  const filtered = alerts.filter((a) => a.field === activeTab);
+
+  const tabs = DASHBOARD_DATE_TABS.map(([field, label]) => {
+    const count = alerts.filter((a) => a.field === field).length;
+    return `<button type="button" class="${activeTab === field ? "active" : ""}" data-action="dashboard-date-tab" data-field="${escapeAttr(field)}">${escapeHtml(label)}${count ? ` (${count})` : ""}</button>`;
+  }).join("");
 
   return `
     <section class="dashboard-layout">
@@ -1533,11 +1553,12 @@ function renderDashboard() {
           <div>
             <p class="eyebrow">Frota</p>
             <h2>Próximas datas</h2>
-            <p>Contagem decrescente das inspeções, aferições e revisões registadas.</p>
+            <p>Contagem decrescente por tipo de registo.</p>
           </div>
         </div>
+        <nav class="subview-tabs" style="padding:12px 16px 0">${tabs}</nav>
         <div class="deadline-list">
-          ${upcoming.length ? upcoming.map((item) => `
+          ${filtered.length ? filtered.map((item) => `
             <article class="deadline-row">
               <div>
                 <strong>Equip. ${escapeHtml(item.equipment)} · ${escapeHtml(item.plate || "-")}</strong>
@@ -1545,7 +1566,7 @@ function renderDashboard() {
               </div>
               ${renderDueBadge(item.date)}
             </article>
-          `).join("") : '<p class="empty-state">Sem datas de frota registadas.</p>'}
+          `).join("") : '<p class="empty-state">Sem datas registadas para este tipo.</p>'}
         </div>
       </div>
     </section>
@@ -2767,6 +2788,7 @@ function getFleetDateAlerts() {
       .map(([field, label]) => ({
         equipment: item.equipment,
         plate: item.plate,
+        field,
         label,
         date: item[field],
         days: daysUntil(item[field])

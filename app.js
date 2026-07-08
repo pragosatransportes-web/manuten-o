@@ -6,6 +6,11 @@ const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 // (e impossível na prática) em vez do texto "N/A", para a sincronização funcionar.
 const FLEET_NA_DATE = "9999-12-31";
 
+// A coluna "driver" da frota depende da migração 002. Até ela existir na base,
+// não podemos incluir o campo nas gravações (partiria todo o upsert da frota).
+// Detetado no carregamento remoto: ver loadRemoteState().
+let remoteFleetHasDriver = true;
+
 // Checklist de vistoria baseado no modelo "checklist_vistoria_frota.xlsx".
 // Secções sem `types` aplicam-se a todos os equipamentos; com `types` só aos tipos indicados.
 // (Definidas aqui no topo porque render() é chamado no arranque e pode renderizar a Vistoria.)
@@ -441,6 +446,12 @@ async function loadRemoteState() {
     if (result.error) throw result.error;
   });
   // as tabelas de vistorias/reuniões podem ainda não existir — ignora o erro silenciosamente
+
+  // Deteta se a coluna "driver" já existe na base (migração 002). Se as linhas
+  // vierem sem a chave, não a enviamos nas gravações para não partir o upsert.
+  if (fleetResult.data.length) {
+    remoteFleetHasDriver = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "driver");
+  }
 
   if (!fleetResult.data.length && !breakdownsResult.data.length) {
     await seedRemoteDatabase();
@@ -1221,7 +1232,7 @@ async function deleteVistoria(id) {
 }
 
 function appFleetToDb(item) {
-  return {
+  const row = {
     equipment: String(item.equipment ?? ""),
     plate: item.plate || null,
     description: item.description || null,
@@ -1234,12 +1245,14 @@ function appFleetToDb(item) {
     exit_reason: item.exitReason || null,
     notes: item.notes || null,
     fleet_company: item.fleetCompany || null,
-    driver: item.driver || null,
     inspection_at: item.inspectionAt || null,
     tachograph_calibration_at: item.tachographAt || null,
     compressor_review_at: item.compressorReviewAt || null,
     wheel_hub_review_at: item.wheelHubReviewAt || null
   };
+  // Só envia "driver" quando a coluna já existe na base (migração 002 corrida).
+  if (remoteFleetHasDriver) row.driver = item.driver || null;
+  return row;
 }
 
 function dbFleetToApp(row) {

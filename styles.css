@@ -756,7 +756,8 @@ td strong { font-weight: 600; font-size: 14px; }
   font-size: 13px;
 }
 
-.fleet-company-select {
+.fleet-company-select,
+.fleet-driver-input {
   min-width: 90px;
   min-height: 32px;
   border: 1px solid var(--line);
@@ -764,6 +765,10 @@ td strong { font-weight: 600; font-size: 14px; }
   padding: 5px 8px;
   background: #fff;
   font-size: 13px;
+}
+
+.fleet-driver-input {
+  min-width: 120px;
 }
 
 /* ── Due badges ─────────────────────────────────── */

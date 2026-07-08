@@ -87,6 +87,9 @@ document.addEventListener("click", async (event) => {
   if (action === "sync-trello" && typeof syncAllBreakdownsToTrello === "function") {
     await syncAllBreakdownsToTrello();
   }
+  if (action === "import-drivers-trello" && typeof importDriversFromTrello === "function") {
+    await importDriversFromTrello();
+  }
   if (action === "dashboard-filter") {
     const filterKey   = button.dataset.filterKey;
     const filterValue = button.dataset.filterValue;
@@ -210,6 +213,9 @@ document.addEventListener("change", async (event) => {
   }
   if (target.dataset.fleetCompany) {
     await updateFleetCompany(target.dataset.equipment, target.value);
+  }
+  if (target.dataset.fleetDriver) {
+    await updateFleetDriver(target.dataset.equipment, target.value);
   }
   if (target.id === "new-plate") {
     fillFleetMatchFromPlate(target.value, true);
@@ -1228,6 +1234,7 @@ function appFleetToDb(item) {
     exit_reason: item.exitReason || null,
     notes: item.notes || null,
     fleet_company: item.fleetCompany || null,
+    driver: item.driver || null,
     inspection_at: item.inspectionAt || null,
     tachograph_calibration_at: item.tachographAt || null,
     compressor_review_at: item.compressorReviewAt || null,
@@ -1249,6 +1256,7 @@ function dbFleetToApp(row) {
     exitReason: row.exit_reason || "",
     notes: row.notes || "",
     fleetCompany: row.fleet_company || "",
+    driver: row.driver || "",
     inspectionAt: row.inspection_at || null,
     tachographAt: row.tachograph_calibration_at || null,
     compressorReviewAt: row.compressor_review_at || null,
@@ -2149,6 +2157,12 @@ function renderFleet() {
           <h2>Viaturas</h2>
           <p>${list.length} registos encontrados</p>
         </div>
+        ${(typeof trelloSettings !== "undefined" && trelloSettings.key) ? `
+        <button class="ghost-button" type="button" data-action="import-drivers-trello"
+          title="Importar o motorista de cada viatura a partir do cartão &quot;motorista associado&quot; no Trello">
+          <span data-icon="rotate"></span>
+          <span>Importar motoristas (Trello)</span>
+        </button>` : ""}
       </div>
       <details class="fleet-add">
         <summary><span data-icon="plus"></span> Adicionar viatura</summary>
@@ -2188,6 +2202,10 @@ function renderFleet() {
                 <option value="PTSA">PTSA</option>
               </select>
             </label>
+            <label class="field">
+              <span>Motorista</span>
+              <input name="driver" placeholder="Motorista responsável">
+            </label>
           </div>
           <div class="form-actions">
             <button class="primary-button" type="submit">
@@ -2211,6 +2229,7 @@ function renderFleet() {
               <th>Ano</th>
               <th>Estado</th>
               <th>Empresa</th>
+              <th>Motorista</th>
               <th>Avarias abertas</th>
               <th>Inspeção</th>
               <th>Aferição tacógrafo</th>
@@ -2229,6 +2248,7 @@ function renderFleet() {
                 <td>${escapeHtml(item.year || "-")}</td>
                 <td>${escapeHtml(item.status || "-")}</td>
                 <td>${renderFleetCompanyCell(item)}</td>
+                <td>${renderFleetDriverCell(item)}</td>
                 <td>${activeCounts[item.equipment] || 0}</td>
                 <td>${renderFleetDateCell(item, "inspectionAt", "Data de inspeção")}</td>
                 <td>${renderFleetDateCell(item, "tachographAt", "Data de aferição tacógrafo")}</td>
@@ -2295,6 +2315,20 @@ function renderFleetCompanyCell(item) {
   `;
 }
 
+function renderFleetDriverCell(item) {
+  return `
+    <input
+      class="fleet-driver-input"
+      type="text"
+      value="${escapeAttr(item.driver || "")}"
+      placeholder="—"
+      data-equipment="${escapeAttr(item.equipment)}"
+      data-fleet-driver="true"
+      aria-label="Motorista equip. ${escapeAttr(item.equipment)}"
+    >
+  `;
+}
+
 function renderDueBadge(dateValue) {
   const due = getDueState(dateValue);
   return `<span class="due-badge ${due.className}">${escapeHtml(due.label)}</span>`;
@@ -2317,6 +2351,22 @@ async function updateFleetDate(equipment, field, value) {
 
 function fleetDateLabel(value) {
   return isFleetNA(value) ? "N/A" : (value || "");
+}
+
+async function updateFleetDriver(equipment, value) {
+  const item = state.fleet.find((fleetItem) => String(fleetItem.equipment) === String(equipment));
+  if (!item) return;
+  const next = String(value || "").trim();
+  const previous = item.driver || "";
+  if (next === previous) return;
+  item.driver = next;
+  const auditEvent = logFleetAudit(item, "driver", previous, next);
+  saveState();
+  showToast("Motorista guardado.");
+  await persistRemoteSafely(async () => {
+    await persistFleetRemote(item);
+    await persistAuditRemote(auditEvent);
+  });
 }
 
 async function updateFleetCompany(equipment, value) {
@@ -2368,6 +2418,7 @@ async function handleNewFleet(form) {
     exitReason: "",
     notes: "",
     fleetCompany: String(data.get("fleetCompany") || ""),
+    driver: String(data.get("driver") || "").trim(),
     inspectionAt: null,
     tachographAt: null,
     compressorReviewAt: null,
@@ -2708,6 +2759,7 @@ function logAudit(breakdown, action, note) {
 function logFleetAudit(item, field, previous, next) {
   const labels = {
     fleetCompany: "Empresa",
+    driver: "Motorista",
     inspectionAt: "Data de inspeção",
     tachographAt: "Data de aferição tacógrafo",
     compressorReviewAt: "Data de revisão compressor",

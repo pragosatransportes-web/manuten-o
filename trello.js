@@ -234,6 +234,85 @@ async function syncAllBreakdownsToTrello() {
   }
 }
 
+// ── Importação de motoristas ──────────────────────────────────────────────
+// Em cada lista de viatura existe um cartão com a etiqueta "motorista associado";
+// o TÍTULO desse cartão é o nome do motorista. A correspondência lista↔viatura
+// reutiliza findTrelloVehicleList (matrícula / n.º de equipamento).
+const TRELLO_DRIVER_LABEL = "motorista associado";
+
+function trelloCardHasDriverLabel(card) {
+  return (card.labels || []).some((label) =>
+    normalizeText(label.name || "").includes(TRELLO_DRIVER_LABEL));
+}
+
+async function importDriversFromTrello() {
+  if (!trelloEnabled() && !requestTrelloToken()) {
+    showToast("Sincronização com o Trello não ativada neste dispositivo.");
+    return;
+  }
+  try {
+    showToast("A importar motoristas do Trello…");
+    const boards = await ensureTrelloDirectory();
+    const boardCards = new Map();
+    const changed = [];
+    let withCard = 0;
+    const noList = [];
+    const noDriverCard = [];
+
+    for (const item of state.fleet) {
+      const target = findTrelloVehicleList(boards, item);
+      if (!target) {
+        noList.push(`${item.equipment || "-"} (${item.plate || "-"})`);
+        continue;
+      }
+      if (!boardCards.has(target.board.id)) {
+        boardCards.set(
+          target.board.id,
+          await trelloFetch(`/boards/${target.board.id}/cards`, {
+            params: { fields: "name,idList,labels" }
+          })
+        );
+      }
+      const cards = boardCards.get(target.board.id);
+      const driverCard = cards.find(
+        (card) => card.idList === target.list.id && trelloCardHasDriverLabel(card)
+      );
+      const driver = (driverCard?.name || "").trim();
+      if (!driver) {
+        noDriverCard.push(`${item.equipment || "-"} (${item.plate || "-"})`);
+        continue;
+      }
+      withCard += 1;
+      if ((item.driver || "") !== driver) {
+        const previous = item.driver || "";
+        item.driver = driver;
+        changed.push({ item, auditEvent: logFleetAudit(item, "driver", previous, driver) });
+      }
+    }
+
+    saveState();
+    render();
+    await persistRemoteSafely(async () => {
+      for (const { item, auditEvent } of changed) {
+        await persistFleetRemote(item);
+        await persistAuditRemote(auditEvent);
+      }
+    });
+
+    if (noDriverCard.length || noList.length) {
+      console.warn("Trello — viaturas sem cartão de motorista:", noDriverCard);
+      console.warn("Trello — viaturas sem lista:", noList);
+    }
+    showToast(
+      `Trello: ${changed.length} motoristas atualizados · ${withCard} com cartão · ` +
+      `${noDriverCard.length} sem cartão · ${noList.length} sem lista.`
+    );
+  } catch (error) {
+    console.error(error);
+    showToast("Importação de motoristas do Trello falhou.");
+  }
+}
+
 if (trelloSettings.key) {
   document.querySelector("#trello-sync-button")?.removeAttribute("hidden");
 }

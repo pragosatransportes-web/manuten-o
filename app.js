@@ -23,7 +23,7 @@ function currentMonthISO() {
 // Enquanto a coluna "driver" não existe na base, o motorista vive localmente:
 // esta importação preenche-o uma vez por dispositivo, e SÓ onde ainda está vazio
 // (não sobrepõe nomes já escritos manualmente).
-const DRIVER_IMPORT_KEY = "avarias-driver-import-2026-07b";
+const DRIVER_IMPORT_KEY = "avarias-driver-import-2026-07c";
 const DRIVER_ASSIGNMENTS = {
   "856": "José Marçal",        "815": "José Marçal",
   "882": "Miguel Quaresma",    "829": "Miguel Quaresma",
@@ -44,7 +44,36 @@ const DRIVER_ASSIGNMENTS = {
   "866": "Vitor Ribeiro",      "40145": "Vitor Ribeiro",
   "891": "José Vilela",        "849": "José Vilela",         "896": "José Vilela",
   "892": "Sérgio Cunha",       "40146": "Sérgio Cunha",
-  "867": "Bruno Silva",        "862": "Bruno Silva"
+  "867": "Bruno Silva",        "862": "Bruno Silva",
+  // 2ª leva (indicada por matrícula, resolvida para nº de equipamento)
+  "70030": "Vitor Januário",     "5270": "Vitor Januário",
+  "5269": "Amilcar Carreira",    "5204": "Amilcar Carreira",
+  "5380": "Francisco Leitão",    "5115": "Francisco Leitão",
+  "5381": "Agostinho Louro",     "5330": "Agostinho Louro",
+  "5379": "Nuno Amaro",          "40143": "Nuno Amaro",
+  "5378": "Carmino Calixto",     "40144": "Carmino Calixto",
+  "5258": "Bernardo Fale",       "70029": "Bernardo Fale",
+  "5295": "Celso Cristo",        "5303": "Celso Cristo",
+  "5296": "João Maximiano",      "5337": "João Maximiano",
+  "70259": "Suplente",
+  "5348": "João Almeida",
+  "5298": "José Miguel Ferreira",
+  "70025": "Andressa Oliveira",
+  "70023": "Pedro Henriques",
+  "5347": "António Luís",
+  "70021": "Luís Bernardo",
+  "5299": "Adriano Machado",
+  "70024": "Carlos Cerejo",
+  "70027": "Mário Gomes",
+  "70022": "Cátia Romão",
+  "5206": "Rúben Ferreira",
+  "5196": "Alex",
+  "5104": "José Pascoal",
+  "5323": "Paulo Fritz",
+  "5245": "Tiago Faria",
+  "5297": "Adriano Sousa",       "5276": "Adriano Sousa",
+  "5316": "José Pereira",
+  "70028": "Ricardo Machado"
 };
 
 function applyDriverImport() {

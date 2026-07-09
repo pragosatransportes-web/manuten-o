@@ -464,11 +464,23 @@ async function loadRemoteState() {
   const breakdowns = breakdownsResult.data.map(dbBreakdownToApp);
   const selectedExists = breakdowns.some((item) => item.id === previousSelectedId);
 
+  // Enquanto a coluna "driver" não existir na base, o motorista vive só
+  // localmente (localStorage). Preserva os nomes já escritos ao recarregar a frota.
+  const localDrivers = new Map((state.fleet || []).map((f) => [String(f.equipment), f.driver || ""]));
+  const mapFleetRow = (row) => {
+    const item = dbFleetToApp(row);
+    if (!remoteFleetHasDriver) {
+      const localDriver = localDrivers.get(String(item.equipment));
+      if (localDriver) item.driver = localDriver;
+    }
+    return item;
+  };
+
   state = {
     ...state,
     currentView: previousView,
     selectedId: selectedExists ? previousSelectedId : (sortedBreakdowns(breakdowns.filter((item) => item.status !== "Concluido"))[0]?.id || breakdowns[0]?.id || ""),
-    fleet: fleetResult.data.map(dbFleetToApp),
+    fleet: fleetResult.data.map(mapFleetRow),
     vistorias: vistoriasResult.error ? (state.vistorias || []) : vistoriasResult.data.map(dbVistoriaToApp),
     meetings: meetingsResult.error ? (state.meetings || []) : meetingsResult.data.map(dbMeetingToApp),
     breakdowns,
@@ -531,6 +543,11 @@ function applyRemoteRow(payload, collection, mapper) {
   if (payload.eventType === "DELETE") {
     if (index >= 0) state[collection].splice(index, 1);
   } else if (index >= 0) {
+    // Sem a coluna "driver" na base, o echo do realtime traria o motorista vazio
+    // e apagaria o valor local — preserva-o até a migração 002 ser corrida.
+    if (collection === "fleet" && !remoteFleetHasDriver) {
+      item.driver = state.fleet[index].driver || item.driver;
+    }
     state[collection][index] = item;
   } else {
     state[collection].unshift(item);

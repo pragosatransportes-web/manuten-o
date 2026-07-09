@@ -23,26 +23,26 @@ function currentMonthISO() {
 // Enquanto a coluna "driver" não existe na base, o motorista vive localmente:
 // esta importação preenche-o uma vez por dispositivo, e SÓ onde ainda está vazio
 // (não sobrepõe nomes já escritos manualmente).
-const DRIVER_IMPORT_KEY = "avarias-driver-import-2026-07";
+const DRIVER_IMPORT_KEY = "avarias-driver-import-2026-07b";
 const DRIVER_ASSIGNMENTS = {
   "856": "José Marçal",        "815": "José Marçal",
   "882": "Miguel Quaresma",    "829": "Miguel Quaresma",
   "859": "Tiago Reis",         "836": "Tiago Reis",
   "868": "Ricardo Campos",     "860": "Ricardo Campos",
-  "881": "Inácio Martins",     "841": "Inácio Martins",
+  "881": "Inácio Martins",     "841": "Inácio Martins",     "894": "Inácio Martins",
   "857": "Guilherme Marques",  "845": "Guilherme Marques",
   "883": "Paulo Vala",         "854": "Paulo Vala",
   "884": "Paulo Monteiro",     "834": "Paulo Monteiro",
   "885": "Nuno Lopes",         "832": "Nuno Lopes",
   "886": "Licinio Ovelheiro",  "839": "Licinio Ovelheiro",
-  "887": "Igor Silva",         "844": "Igor Silva",
+  "887": "Igor Silva",         "844": "Igor Silva",         "855": "Igor Silva",
   "888": "Júlio Rodrigues",    "818": "Júlio Rodrigues",
   "889": "Álvaro Silva",       "825": "Álvaro Silva",
   "890": "Carlos Carvalho",    "830": "Carlos Carvalho",
   "893": "Diogo Santos",       "870": "Diogo Santos",
-  "864": "Ricardo Figueira",   "876": "Ricardo Figueira",
+  "864": "Ricardo Figueira",   "876": "Ricardo Figueira",   "848": "Ricardo Figueira",
   "866": "Vitor Ribeiro",      "40145": "Vitor Ribeiro",
-  "891": "José Vilela",        "849": "José Vilela",
+  "891": "José Vilela",        "849": "José Vilela",         "896": "José Vilela",
   "892": "Sérgio Cunha",       "40146": "Sérgio Cunha",
   "867": "Bruno Silva",        "862": "Bruno Silva"
 };

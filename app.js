@@ -11,6 +11,14 @@ const FLEET_NA_DATE = "9999-12-31";
 // Detetado no carregamento remoto: ver loadRemoteState().
 let remoteFleetHasDriver = true;
 
+// Tipos de ausência de motorista (calendário de ausências, migração 003).
+const ABSENCE_TYPES = ["Férias", "Baixa médica"];
+
+// Mês em foco no calendário de ausências, no formato "YYYY-MM".
+function currentMonthISO() {
+  return todayISO().slice(0, 7);
+}
+
 // Checklist de vistoria baseado no modelo "checklist_vistoria_frota.xlsx".
 // Secções sem `types` aplicam-se a todos os equipamentos; com `types` só aos tipos indicados.
 // (Definidas aqui no topo porque render() é chamado no arranque e pode renderizar a Vistoria.)
@@ -166,6 +174,16 @@ document.addEventListener("click", async (event) => {
   if (action === "delete-fleet") {
     await deleteFleetItem(button.dataset.equipment);
   }
+  if (action === "ausencia-prev-month") shiftAusenciaMonth(-1);
+  if (action === "ausencia-next-month") shiftAusenciaMonth(1);
+  if (action === "ausencia-today") {
+    state.ausenciaMonth = currentMonthISO();
+    saveState();
+    render();
+  }
+  if (action === "delete-ausencia") {
+    await deleteAusencia(button.dataset.id);
+  }
   if (action === "fleet-date-na") {
     await updateFleetDate(button.dataset.equipment, button.dataset.field, FLEET_NA_DATE);
   }
@@ -259,6 +277,10 @@ document.addEventListener("submit", async (event) => {
     event.preventDefault();
     await handleNewVistoria(form);
   }
+  if (form.dataset.form === "new-ausencia") {
+    event.preventDefault();
+    await handleNewAusencia(form);
+  }
   if (form.dataset.form === "edit-vistoria") {
     event.preventDefault();
     await handleEditVistoria(form);
@@ -309,6 +331,8 @@ function makeInitialState() {
     sourceGeneratedAt: seed.generatedAt || "",
     fleet: seed.fleet || [],
     vistorias: [],
+    ausencias: [],
+    ausenciaMonth: currentMonthISO(),
     breakdowns,
     snapshots: seed.snapshots || [],
     audit: buildAudit(breakdowns),
@@ -433,13 +457,14 @@ function updateSyncStatus(label, className, ready) {
 }
 
 async function loadRemoteState() {
-  const [fleetResult, breakdownsResult, snapshotsResult, auditResult, vistoriasResult, meetingsResult] = await Promise.all([
+  const [fleetResult, breakdownsResult, snapshotsResult, auditResult, vistoriasResult, meetingsResult, ausenciasResult] = await Promise.all([
     remoteClient.from("avarias_fleet").select("*").order("equipment", { ascending: true }),
     remoteClient.from("avarias_breakdowns").select("*").order("updated_at", { ascending: false }),
     remoteClient.from("avarias_snapshots").select("*").order("date", { ascending: true }),
     remoteClient.from("avarias_audit_events").select("*").order("at", { ascending: false }),
     remoteClient.from("avarias_vistorias").select("*").order("date", { ascending: false }),
-    remoteClient.from("avarias_reunioes").select("*").order("started_at", { ascending: false })
+    remoteClient.from("avarias_reunioes").select("*").order("started_at", { ascending: false }),
+    remoteClient.from("avarias_ausencias").select("*").order("start_at", { ascending: true })
   ]);
 
   [fleetResult, breakdownsResult, snapshotsResult, auditResult].forEach((result) => {
@@ -483,6 +508,7 @@ async function loadRemoteState() {
     fleet: fleetResult.data.map(mapFleetRow),
     vistorias: vistoriasResult.error ? (state.vistorias || []) : vistoriasResult.data.map(dbVistoriaToApp),
     meetings: meetingsResult.error ? (state.meetings || []) : meetingsResult.data.map(dbMeetingToApp),
+    ausencias: ausenciasResult.error ? (state.ausencias || []) : ausenciasResult.data.map(dbAusenciaToApp),
     breakdowns,
     snapshots: snapshotsResult.data.map(dbSnapshotToApp),
     audit: auditResult.data.length ? auditResult.data.map(dbAuditToApp) : buildAudit(breakdowns),
@@ -528,6 +554,9 @@ function subscribeRemoteChanges() {
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "avarias_reunioes" }, (payload) => {
       applyRemoteRow(payload, "meetings", dbMeetingToApp);
+    })
+    .on("postgres_changes", { event: "*", schema: "public", table: "avarias_ausencias" }, (payload) => {
+      applyRemoteRow(payload, "ausencias", dbAusenciaToApp);
     })
     .subscribe();
 }
@@ -601,6 +630,48 @@ async function deleteVistoriaRemote(id) {
   if (!remoteStatus.ready || !remoteClient) return;
   const { error } = await remoteClient.from("avarias_vistorias").delete().eq("id", String(id));
   if (error) throw error;
+}
+
+async function persistAusenciaRemote(ausencia) {
+  if (!remoteStatus.ready || !remoteClient || !ausencia) return;
+  updateSyncStatus("A guardar ausência", "syncing", true);
+  const { error } = await remoteClient
+    .from("avarias_ausencias")
+    .upsert(appAusenciaToDb(ausencia), { onConflict: "id" });
+  if (error) throw error;
+  updateSyncStatus("Partilhado em tempo real", "remote", true);
+}
+
+async function deleteAusenciaRemote(id) {
+  if (!remoteStatus.ready || !remoteClient) return;
+  const { error } = await remoteClient.from("avarias_ausencias").delete().eq("id", String(id));
+  if (error) throw error;
+}
+
+function appAusenciaToDb(item) {
+  return {
+    id: String(item.id),
+    driver: item.driver || "",
+    type: item.type || null,
+    start_at: item.startAt || null,
+    end_at: item.endAt || null,
+    notes: item.notes || null,
+    created_at: item.createdAt || new Date().toISOString(),
+    created_by: item.createdBy || remoteConfig.operator || "Utilizador"
+  };
+}
+
+function dbAusenciaToApp(row) {
+  return {
+    id: String(row.id),
+    driver: row.driver || "",
+    type: row.type || "",
+    startAt: row.start_at || "",
+    endAt: row.end_at || "",
+    notes: row.notes || "",
+    createdAt: row.created_at || "",
+    createdBy: row.created_by || ""
+  };
 }
 
 async function persistRemoteSafely(work) {
@@ -1520,6 +1591,7 @@ function render(focusSelector = "") {
     new: renderNewBreakdown,
     fleet: renderFleet,
     vistoria: renderVistoria,
+    ausencias: renderAusencias,
     audit: renderAudit
   };
   let html;
@@ -2807,6 +2879,268 @@ function logFleetAudit(item, field, previous, next) {
   };
   state.audit.unshift(auditEvent);
   return auditEvent;
+}
+
+// ── AUSÊNCIAS (calendário + cruzamento com manutenções) ───────────────────
+
+function distinctFleetDrivers() {
+  return [...new Set(state.fleet.map((f) => (f.driver || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "pt"));
+}
+
+function fleetForDriver(driver) {
+  const key = normalizeText(driver || "");
+  if (!key) return [];
+  return state.fleet.filter((f) => f.driver && normalizeText(f.driver) === key);
+}
+
+function absenceClass(type) {
+  const t = normalizeText(type || "");
+  if (t.includes("ferias")) return "ferias";
+  if (t.includes("baixa")) return "baixa";
+  return "outro";
+}
+
+function dateWithin(dateISO, startISO, endISO) {
+  if (!startISO || !endISO) return false;
+  return dateISO >= startISO && dateISO <= endISO;
+}
+
+function monthBounds(monthISO) {
+  const [y, m] = monthISO.split("-").map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return { first: `${monthISO}-01`, last: `${monthISO}-${String(last).padStart(2, "0")}`, daysInMonth: last, year: y, month: m };
+}
+
+function absenceOverlapsMonth(a, monthISO) {
+  if (!a.startAt || !a.endAt) return false;
+  const { first, last } = monthBounds(monthISO);
+  return a.startAt <= last && a.endAt >= first;
+}
+
+function absenceDays(a) {
+  if (!a.startAt || !a.endAt) return "-";
+  const ms = new Date(`${a.endAt}T00:00:00`) - new Date(`${a.startAt}T00:00:00`);
+  return Number.isFinite(ms) ? Math.floor(ms / 86400000) + 1 : "-";
+}
+
+function fleetDueList(f) {
+  return [
+    { label: "Inspeção", value: f.inspectionAt },
+    { label: "Tacógrafo", value: f.tachographAt },
+    { label: "Compressor", value: f.compressorReviewAt },
+    { label: "Cubos", value: f.wheelHubReviewAt }
+  ].filter((x) => x.value && !isFleetNA(x.value));
+}
+
+function renderAusencias() {
+  const monthISO = state.ausenciaMonth || currentMonthISO();
+  const list = [...state.ausencias].sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)));
+  const drivers = distinctFleetDrivers();
+  const monthAbs = list.filter((a) => absenceOverlapsMonth(a, monthISO));
+
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Ausências</p>
+          <h2>Calendário de ausências</h2>
+          <p>${list.length} ausência(s) registada(s)</p>
+        </div>
+      </div>
+
+      <details class="fleet-add">
+        <summary><span data-icon="plus"></span> Registar ausência</summary>
+        <form class="data-form" data-form="new-ausencia">
+          <div class="form-grid">
+            <label class="field">
+              <span>Motorista</span>
+              <input name="driver" list="ausencia-drivers" required placeholder="Nome do motorista">
+              <datalist id="ausencia-drivers">${drivers.map((d) => `<option value="${escapeAttr(d)}"></option>`).join("")}</datalist>
+            </label>
+            <label class="field">
+              <span>Tipo</span>
+              <select name="type">${ABSENCE_TYPES.map((t) => `<option value="${escapeAttr(t)}">${escapeHtml(t)}</option>`).join("")}</select>
+            </label>
+            <label class="field"><span>Início</span><input type="date" name="startAt" required></label>
+            <label class="field"><span>Fim</span><input type="date" name="endAt" required></label>
+            <label class="field"><span>Notas</span><input name="notes" placeholder="Opcional"></label>
+          </div>
+          <div class="form-actions">
+            <button class="primary-button" type="submit"><span data-icon="plus"></span><span>Registar ausência</span></button>
+          </div>
+        </form>
+      </details>
+
+      ${renderAusenciaCalendar(monthISO, list)}
+      ${renderAusenciaPlanning(monthAbs, monthISO)}
+      ${renderAusenciaList(list)}
+    </section>
+  `;
+}
+
+function renderAusenciaCalendar(monthISO, list) {
+  const { daysInMonth, year, month } = monthBounds(monthISO);
+  const first = new Date(year, month - 1, 1);
+  const startWeekday = (first.getDay() + 6) % 7; // 0 = Segunda
+  const monthLabel = new Intl.DateTimeFormat("pt-PT", { month: "long", year: "numeric" }).format(first);
+  const today = todayISO();
+  const weekdays = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
+
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(`<div class="cal-cell cal-cell--empty"></div>`);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateISO = `${monthISO}-${String(d).padStart(2, "0")}`;
+    const dayAbs = list.filter((a) => dateWithin(dateISO, a.startAt, a.endAt));
+    const chips = dayAbs
+      .map((a) => `<span class="cal-abs cal-abs--${absenceClass(a.type)}" title="${escapeAttr(`${a.driver} · ${a.type}`)}">${escapeHtml(a.driver)}</span>`)
+      .join("");
+    cells.push(`<div class="cal-cell${dateISO === today ? " cal-cell--today" : ""}"><span class="cal-day">${d}</span>${chips}</div>`);
+  }
+
+  return `
+    <div class="cal-toolbar">
+      <button class="ghost-button" type="button" data-action="ausencia-prev-month" aria-label="Mês anterior">‹</button>
+      <strong class="cal-month">${escapeHtml(monthLabel)}</strong>
+      <button class="ghost-button" type="button" data-action="ausencia-next-month" aria-label="Mês seguinte">›</button>
+      <button class="link-button" type="button" data-action="ausencia-today">Hoje</button>
+    </div>
+    <div class="cal-grid cal-grid--head">${weekdays.map((w) => `<div class="cal-head">${w}</div>`).join("")}</div>
+    <div class="cal-grid">${cells.join("")}</div>
+  `;
+}
+
+function renderAusenciaPlanning(monthAbs, monthISO) {
+  const label = new Intl.DateTimeFormat("pt-PT", { month: "long" }).format(new Date(`${monthISO}-01T00:00:00`));
+  if (!monthAbs.length) {
+    return `<div class="panel-sub"><h3>Janelas de manutenção</h3><p class="muted">Sem ausências em ${escapeHtml(label)}.</p></div>`;
+  }
+  const cards = monthAbs.map((a) => {
+    const equips = fleetForDriver(a.driver);
+    const equipHtml = equips.length
+      ? equips.map((f) => {
+          const dues = fleetDueList(f);
+          const badges = dues.length
+            ? dues.map((x) => `<span class="plan-due">${escapeHtml(x.label)} ${renderDueBadge(x.value)}</span>`).join("")
+            : `<span class="muted">sem datas de manutenção</span>`;
+          return `<div class="plan-equip"><strong>Equip. ${escapeHtml(f.equipment)}</strong> · ${escapeHtml(f.plate || "-")} <span class="muted">${escapeHtml(f.description || "")}</span><div class="plan-dues">${badges}</div></div>`;
+        }).join("")
+      : `<div class="plan-equip plan-equip--none muted">Sem equipamento associado a este motorista.</div>`;
+    return `
+      <div class="plan-card">
+        <div class="plan-head">
+          <span class="cal-abs cal-abs--${absenceClass(a.type)}">${escapeHtml(a.type)}</span>
+          <strong>${escapeHtml(a.driver)}</strong>
+          <span class="plan-dates">${formatDate(a.startAt)} → ${formatDate(a.endAt)} · ${absenceDays(a)} d</span>
+        </div>
+        ${equipHtml}
+      </div>`;
+  }).join("");
+  return `
+    <div class="panel-sub">
+      <h3>Janelas de manutenção durante ausências</h3>
+      <p class="muted">Equipamentos livres enquanto o motorista está ausente, e as próximas datas a vencer.</p>
+      ${cards}
+    </div>`;
+}
+
+function renderAusenciaList(list) {
+  if (!list.length) return `<div class="panel-sub"><p class="muted">Ainda não há ausências registadas.</p></div>`;
+  return `
+    <div class="panel-sub">
+      <h3>Todas as ausências</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Motorista</th><th>Tipo</th><th>Início</th><th>Fim</th><th>Dias</th><th>Notas</th><th></th></tr></thead>
+          <tbody>
+            ${list.map((a) => `
+              <tr>
+                <td><strong>${escapeHtml(a.driver)}</strong></td>
+                <td><span class="cal-abs cal-abs--${absenceClass(a.type)}">${escapeHtml(a.type)}</span></td>
+                <td>${formatDate(a.startAt)}</td>
+                <td>${formatDate(a.endAt)}</td>
+                <td>${absenceDays(a)}</td>
+                <td class="compact-cell">${escapeHtml(a.notes || "-")}</td>
+                <td><button class="icon-button" type="button" data-action="delete-ausencia" data-id="${escapeAttr(a.id)}" title="Eliminar ausência"><span data-icon="trash"></span></button></td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function shiftAusenciaMonth(delta) {
+  const [y, m] = (state.ausenciaMonth || currentMonthISO()).split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  state.ausenciaMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  saveState();
+  render();
+}
+
+async function handleNewAusencia(form) {
+  const data = new FormData(form);
+  const driver = String(data.get("driver") || "").trim();
+  const startAt = String(data.get("startAt") || "");
+  const endAt = String(data.get("endAt") || "");
+  const type = String(data.get("type") || ABSENCE_TYPES[0]);
+  if (!driver) { showToast("Indique o motorista."); return; }
+  if (!startAt || !endAt) { showToast("Indique as datas de início e fim."); return; }
+  if (endAt < startAt) { showToast("A data de fim é anterior à de início."); return; }
+
+  const item = {
+    id: `AUS-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    driver,
+    type,
+    startAt,
+    endAt,
+    notes: String(data.get("notes") || "").trim(),
+    createdAt: new Date().toISOString(),
+    createdBy: remoteConfig.operator || "Utilizador"
+  };
+  state.ausencias.push(item);
+  const auditEvent = {
+    id: `AUS-${item.id}-criada`,
+    breakdownId: "",
+    equipment: "",
+    plate: "",
+    at: new Date().toISOString(),
+    action: "Ausência registada",
+    status: type,
+    note: `${driver} · ${formatDate(startAt)} → ${formatDate(endAt)}`
+  };
+  state.audit.unshift(auditEvent);
+  saveState();
+  showToast("Ausência registada.");
+  render();
+  await persistRemoteSafely(async () => {
+    await persistAusenciaRemote(item);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
+async function deleteAusencia(id) {
+  const a = state.ausencias.find((x) => String(x.id) === String(id));
+  if (!a) return;
+  if (!window.confirm(`Eliminar a ausência de ${a.driver} (${formatDate(a.startAt)} → ${formatDate(a.endAt)})?`)) return;
+  state.ausencias = state.ausencias.filter((x) => x !== a);
+  const auditEvent = {
+    id: `AUS-${id}-eliminada-${Date.now()}`,
+    breakdownId: "",
+    equipment: "",
+    plate: "",
+    at: new Date().toISOString(),
+    action: "Ausência eliminada",
+    status: a.type,
+    note: `${a.driver} · ${formatDate(a.startAt)} → ${formatDate(a.endAt)}`
+  };
+  state.audit.unshift(auditEvent);
+  saveState();
+  showToast("Ausência eliminada.");
+  render();
+  await persistRemoteSafely(async () => {
+    await deleteAusenciaRemote(id);
+    await persistAuditRemote(auditEvent);
+  });
 }
 
 function getMetrics() {

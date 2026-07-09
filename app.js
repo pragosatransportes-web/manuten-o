@@ -14,6 +14,19 @@ let remoteFleetHasDriver = true;
 // Tipos de ausência de motorista (calendário de ausências, migração 003).
 const ABSENCE_TYPES = ["Férias", "Baixa médica"];
 
+// Descrições padronizadas dos equipamentos (menu na Frota).
+const FLEET_DESCRIPTIONS = [
+  "Trator",
+  "Semi-reboque basculante",
+  "Semi-reboque cisterna",
+  "Porta-máquinas",
+  "Carro Grua",
+  "Xico",
+  "Carro Cola",
+  "Carro Água",
+  "Estrado"
+];
+
 // Mês em foco no calendário de ausências, no formato "YYYY-MM".
 function currentMonthISO() {
   return todayISO().slice(0, 7);
@@ -2507,16 +2520,23 @@ function renderFleetDriverCell(item) {
 }
 
 function renderFleetDescriptionCell(item) {
+  const current = (item.description || "").trim();
+  const match = current ? FLEET_DESCRIPTIONS.find((o) => normalizeText(o) === normalizeText(current)) : null;
+  const parts = [`<option value="">—</option>`];
+  for (const o of FLEET_DESCRIPTIONS) {
+    parts.push(`<option value="${escapeAttr(o)}"${o === match ? " selected" : ""}>${escapeHtml(o)}</option>`);
+  }
+  // Descrição atual fora da lista: preserva-a como opção até ser reclassificada.
+  if (current && !match) {
+    parts.push(`<option value="${escapeAttr(current)}" selected>${escapeHtml(current)} (atual)</option>`);
+  }
   return `
-    <input
-      class="fleet-desc-input"
-      type="text"
-      value="${escapeAttr(item.description || "")}"
-      placeholder="—"
+    <select
+      class="fleet-desc-select"
       data-equipment="${escapeAttr(item.equipment)}"
       data-fleet-description="true"
       aria-label="Descrição equip. ${escapeAttr(item.equipment)}"
-    >
+    >${parts.join("")}</select>
   `;
 }
 

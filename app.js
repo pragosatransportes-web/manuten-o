@@ -311,6 +311,9 @@ document.addEventListener("change", async (event) => {
   if (target.dataset.fleetDriver) {
     await updateFleetDriver(target.dataset.equipment, target.value);
   }
+  if (target.dataset.fleetDescription) {
+    await updateFleetDescription(target.dataset.equipment, target.value);
+  }
   if (target.id === "new-plate") {
     fillFleetMatchFromPlate(target.value, true);
   }
@@ -2417,7 +2420,7 @@ function renderFleet() {
               <tr>
                 <td><strong>${escapeHtml(item.equipment || "-")}</strong></td>
                 <td>${escapeHtml(item.plate || "-")}</td>
-                <td class="compact-cell">${escapeHtml(item.description || "-")}</td>
+                <td>${renderFleetDescriptionCell(item)}</td>
                 <td>${escapeHtml(item.brand || item.model || "-")}</td>
                 <td>${escapeHtml(item.year || "-")}</td>
                 <td>${escapeHtml(item.status || "-")}</td>
@@ -2503,6 +2506,20 @@ function renderFleetDriverCell(item) {
   `;
 }
 
+function renderFleetDescriptionCell(item) {
+  return `
+    <input
+      class="fleet-desc-input"
+      type="text"
+      value="${escapeAttr(item.description || "")}"
+      placeholder="—"
+      data-equipment="${escapeAttr(item.equipment)}"
+      data-fleet-description="true"
+      aria-label="Descrição equip. ${escapeAttr(item.equipment)}"
+    >
+  `;
+}
+
 function renderDueBadge(dateValue) {
   const due = getDueState(dateValue);
   return `<span class="due-badge ${due.className}">${escapeHtml(due.label)}</span>`;
@@ -2537,6 +2554,22 @@ async function updateFleetDriver(equipment, value) {
   const auditEvent = logFleetAudit(item, "driver", previous, next);
   saveState();
   showToast("Motorista guardado.");
+  await persistRemoteSafely(async () => {
+    await persistFleetRemote(item);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
+async function updateFleetDescription(equipment, value) {
+  const item = state.fleet.find((fleetItem) => String(fleetItem.equipment) === String(equipment));
+  if (!item) return;
+  const next = String(value || "").trim();
+  const previous = item.description || "";
+  if (next === previous) return;
+  item.description = next;
+  const auditEvent = logFleetAudit(item, "description", previous, next);
+  saveState();
+  showToast("Descrição guardada.");
   await persistRemoteSafely(async () => {
     await persistFleetRemote(item);
     await persistAuditRemote(auditEvent);
@@ -2934,6 +2967,7 @@ function logFleetAudit(item, field, previous, next) {
   const labels = {
     fleetCompany: "Empresa",
     driver: "Motorista",
+    description: "Descrição",
     inspectionAt: "Data de inspeção",
     tachographAt: "Data de aferição tacógrafo",
     compressorReviewAt: "Data de revisão compressor",

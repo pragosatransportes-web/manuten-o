@@ -757,7 +757,8 @@ td strong { font-weight: 600; font-size: 14px; }
 }
 
 .fleet-company-select,
-.fleet-driver-input {
+.fleet-driver-input,
+.fleet-desc-input {
   min-width: 90px;
   min-height: 32px;
   border: 1px solid var(--line);
@@ -769,6 +770,11 @@ td strong { font-weight: 600; font-size: 14px; }
 
 .fleet-driver-input {
   min-width: 120px;
+}
+
+.fleet-desc-input {
+  min-width: 180px;
+  width: 100%;
 }
 
 /* ── Ausências / Calendário ─────────────────────────── */

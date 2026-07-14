@@ -1,6 +1,6 @@
 window.AVARIAS_REMOTE_CONFIG = {
-  supabaseUrl: "https://gmurqvlcdevyinieqdgy.supabase.co",
-  supabaseAnonKey: "sb_publishable_TV_kENAdnHySj5SQN9wLtQ_uqc748t7",
+  supabaseUrl: "https://ecuiacbpyyjjtwiweuxy.supabase.co",
+  supabaseAnonKey: "sb_publishable_f5Sg2YhZPEcrkXFpEym3TQ_m1LVYOMz",
   operator: "Equipa Oficina",
   trello: {
     // Integração Trello: a "key" identifica a aplicação (pública por definição).

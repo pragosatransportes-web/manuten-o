@@ -218,6 +218,14 @@ document.addEventListener("click", async (event) => {
   if (action === "close-meeting") {
     await closeMeeting();
   }
+  if (action === "dock-toggle") {
+    state.meetingDockCollapsed = !state.meetingDockCollapsed;
+    saveState();
+    updateMeetingDock();
+  }
+  if (action === "dock-task-toggle") {
+    toggleMeetingTask(button.dataset.id);
+  }
   if (action === "meeting-consult") {
     state.meetingView = "consult";
     state.currentView = "meeting";
@@ -364,6 +372,11 @@ document.addEventListener("submit", async (event) => {
     event.preventDefault();
     await handleNewVistoria(form);
   }
+  if (form.dataset.form === "dock-note") {
+    event.preventDefault();
+    const data = new FormData(form);
+    addMeetingNote(String(data.get("type") || "note"), String(data.get("text") || ""));
+  }
   if (form.dataset.form === "new-ausencia") {
     event.preventDefault();
     await handleNewAusencia(form);
@@ -413,6 +426,8 @@ function makeInitialState() {
     meetingView: "home",
     activeMeetingId: "",
     selectedMeetingId: "",
+    meetingDockCollapsed: false,
+    dockNoteType: "note",
     meetings: [],
     dashboardDateTab: "inspectionAt",
     sourceGeneratedAt: seed.generatedAt || "",
@@ -1662,6 +1677,81 @@ function recordMeetingEvent(type, breakdown, summary) {
   persistRemoteSafely(() => persistMeetingRemote(meeting));
 }
 
+// Painel flutuante ("volante") de notas/tarefas durante a reunião a decorrer.
+function updateMeetingDock() {
+  const dock = document.querySelector("#meeting-dock");
+  if (!dock) return;
+  const m = getActiveMeeting();
+  if (!m) { dock.innerHTML = ""; dock.classList.remove("visible"); return; }
+  dock.classList.add("visible");
+  const entries = (m.events || []).filter((e) => e.type === "note" || e.type === "task");
+
+  if (state.meetingDockCollapsed) {
+    dock.innerHTML = `<button class="dock-bubble" type="button" data-action="dock-toggle" title="Notas e tarefas da reunião">📝<span class="dock-bubble__n">${entries.length}</span></button>`;
+    return;
+  }
+
+  const type = state.dockNoteType === "task" ? "task" : "note";
+  dock.innerHTML = `
+    <div class="dock-panel">
+      <div class="dock-head">
+        <strong>🟢 Reunião · notas &amp; tarefas</strong>
+        <button class="dock-min" type="button" data-action="dock-toggle" title="Minimizar">–</button>
+      </div>
+      <div class="dock-log" id="dock-log">
+        ${entries.length ? entries.map((e) => `
+          <div class="dock-item dock-item--${e.type}${e.done ? " done" : ""}">
+            ${e.type === "task"
+              ? `<button class="dock-check" type="button" data-action="dock-task-toggle" data-id="${escapeAttr(e.id)}" title="Marcar concluída">${e.done ? "✅" : "⬜"}</button>`
+              : `<span class="dock-ic">🗒️</span>`}
+            <span class="dock-text">${escapeHtml(e.summary || "")}</span>
+            <time>${escapeHtml(formatTimeOnly(e.at))}</time>
+          </div>`).join("") : `<p class="dock-empty">Sem notas nem tarefas ainda. Escreve abaixo. ✍️</p>`}
+      </div>
+      <form class="dock-form" data-form="dock-note">
+        <select name="type" class="dock-type" aria-label="Tipo">
+          <option value="note" ${type === "note" ? "selected" : ""}>Nota</option>
+          <option value="task" ${type === "task" ? "selected" : ""}>Tarefa</option>
+        </select>
+        <input id="dock-input" name="text" placeholder="Escrever…" autocomplete="off" required>
+        <button class="dock-send" type="submit">Adicionar</button>
+      </form>
+    </div>`;
+  const log = document.querySelector("#dock-log");
+  if (log) log.scrollTop = log.scrollHeight;
+}
+
+function addMeetingNote(type, text) {
+  const m = getActiveMeeting();
+  const clean = String(text || "").trim();
+  if (!m || !clean) return;
+  state.dockNoteType = type === "task" ? "task" : "note";
+  m.events.push({
+    id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    at: new Date().toISOString(),
+    type: state.dockNoteType,
+    summary: clean,
+    done: false,
+    breakdownId: "", equipment: "", plate: "", status: ""
+  });
+  saveState();
+  updateMeetingDock();
+  document.querySelector("#dock-input")?.focus();
+  showToast(state.dockNoteType === "task" ? "Tarefa adicionada." : "Nota adicionada.");
+  persistRemoteSafely(() => persistMeetingRemote(m));
+}
+
+function toggleMeetingTask(id) {
+  const m = getActiveMeeting();
+  if (!m) return;
+  const e = (m.events || []).find((x) => x.id === id);
+  if (!e) return;
+  e.done = !e.done;
+  saveState();
+  updateMeetingDock();
+  persistRemoteSafely(() => persistMeetingRemote(m));
+}
+
 function render(focusSelector = "") {
   const metrics = getMetrics();
   document.querySelector("#data-line").textContent =
@@ -1691,6 +1781,7 @@ function render(focusSelector = "") {
   }
   main.innerHTML = html;
   hydrateIcons();
+  try { updateMeetingDock(); } catch (e) { console.error("dock:", e); }
 
   if (focusSelector) {
     const element = document.querySelector(focusSelector);
@@ -1895,7 +1986,7 @@ function renderMeetingConsult() {
                 <td>${escapeHtml(formatTimeOnly(m.startedAt))}</td>
                 <td>${ended ? `${m.durationMin} min` : "—"}</td>
                 <td>${ended ? '<span class="badge concluido">Encerrada</span>' : '<span class="badge circula">A decorrer</span>'}</td>
-                <td>${counts.novas} novas · ${counts.updates} atualizações</td>
+                <td>${counts.novas} novas · ${counts.updates} atualizações · ${counts.tarefas} tarefas</td>
                 <td>${escapeHtml(m.operator || "-")}</td>
                 <td><button class="icon-button" type="button" data-action="select-meeting" data-id="${escapeAttr(m.id)}" title="Ver relatório"><span data-icon="eye"></span></button></td>
               </tr>`;
@@ -1910,7 +2001,9 @@ function meetingCounts(m) {
   const ev = m.events || [];
   return {
     novas: ev.filter((e) => e.type === "new").length,
-    updates: ev.filter((e) => e.type === "update" || e.type === "close" || e.type === "reopen").length
+    updates: ev.filter((e) => e.type === "update" || e.type === "close" || e.type === "reopen").length,
+    tarefas: ev.filter((e) => e.type === "task").length,
+    notas: ev.filter((e) => e.type === "note").length
   };
 }
 
@@ -1918,6 +2011,8 @@ function meetingEventLabel(type) {
   return type === "new" ? "Nova avaria"
     : type === "close" ? "Concluída"
     : type === "reopen" ? "Reaberta"
+    : type === "task" ? "Tarefa"
+    : type === "note" ? "Nota"
     : "Atualização";
 }
 
@@ -1926,10 +2021,17 @@ function renderMeetingReport() {
   if (!m) return `<div class="panel"><p class="empty-state">Reunião não encontrada.</p></div>`;
   const ev = m.events || [];
   const novas = ev.filter((e) => e.type === "new");
-  const updates = ev.filter((e) => e.type !== "new");
+  const updates = ev.filter((e) => e.type === "update" || e.type === "close" || e.type === "reopen");
+  const tarefas = ev.filter((e) => e.type === "task");
+  const notas = ev.filter((e) => e.type === "note");
   const rowsHtml = (arr) => arr.length ? arr.map((e) => `
     <article class="timeline-item">
       <time>${formatTimeOnly(e.at)} · Equip. ${escapeHtml(String(e.equipment || "-"))} · ${escapeHtml(e.plate || "-")} · ${escapeHtml(meetingEventLabel(e.type))}</time>
+      <p>${escapeHtml(e.summary || "-")}</p>
+    </article>`).join("") : '<p class="empty-state">Sem registos.</p>';
+  const noteRows = (arr) => arr.length ? arr.map((e) => `
+    <article class="timeline-item">
+      <time>${formatTimeOnly(e.at)}${e.type === "task" ? (e.done ? " · ✅ concluída" : " · ⬜ pendente") : ""}</time>
       <p>${escapeHtml(e.summary || "-")}</p>
     </article>`).join("") : '<p class="empty-state">Sem registos.</p>';
 
@@ -1948,12 +2050,17 @@ function renderMeetingReport() {
         <article class="metric-card"><span>Duração</span><strong>${m.endedAt ? `${m.durationMin}m` : "—"}</strong><em>tempo da reunião</em></article>
         <article class="metric-card"><span>Novas avarias</span><strong>${novas.length}</strong><em>criadas na reunião</em></article>
         <article class="metric-card"><span>Atualizações</span><strong>${updates.length}</strong><em>em avarias abertas</em></article>
-        <article class="metric-card"><span>Total de ações</span><strong>${ev.length}</strong><em>registadas</em></article>
+        <article class="metric-card"><span>Tarefas</span><strong>${tarefas.length}</strong><em>${tarefas.filter((t) => !t.done).length} pendentes</em></article>
+        <article class="metric-card"><span>Notas</span><strong>${notas.length}</strong><em>observações</em></article>
       </div>
       <div class="panel-header"><div><h3>Novas avarias (${novas.length})</h3></div></div>
       <div class="timeline" style="padding:0 16px 8px">${rowsHtml(novas)}</div>
       <div class="panel-header"><div><h3>Atualizações em avarias abertas (${updates.length})</h3></div></div>
-      <div class="timeline" style="padding:0 16px 16px">${rowsHtml(updates)}</div>
+      <div class="timeline" style="padding:0 16px 8px">${rowsHtml(updates)}</div>
+      <div class="panel-header"><div><h3>Tarefas (${tarefas.length})</h3></div></div>
+      <div class="timeline" style="padding:0 16px 8px">${noteRows(tarefas)}</div>
+      <div class="panel-header"><div><h3>Notas / observações (${notas.length})</h3></div></div>
+      <div class="timeline" style="padding:0 16px 16px">${noteRows(notas)}</div>
     </section>`;
 }
 
@@ -3600,7 +3707,9 @@ function getMeetingById(id) {
 function buildMeetingReportWorkbook(meeting) {
   const ev = meeting.events || [];
   const novas = ev.filter((e) => e.type === "new");
-  const updates = ev.filter((e) => e.type !== "new");
+  const updates = ev.filter((e) => e.type === "update" || e.type === "close" || e.type === "reopen");
+  const tarefas = ev.filter((e) => e.type === "task");
+  const notas = ev.filter((e) => e.type === "note");
   const dia = formatDate((meeting.startedAt || "").slice(0, 10));
   return {
     title: "Relatório de reunião",
@@ -3617,7 +3726,8 @@ function buildMeetingReportWorkbook(meeting) {
           ["Operador", meeting.operator || "-"],
           ["Novas avarias", novas.length],
           ["Atualizações", updates.length],
-          ["Total de ações", ev.length]
+          ["Tarefas", tarefas.length],
+          ["Notas", notas.length]
         ]
       },
       {
@@ -3629,6 +3739,16 @@ function buildMeetingReportWorkbook(meeting) {
         title: "Atualizações",
         columns: ["Hora", "Equip.", "Matrícula", "Ação", "Resumo"],
         rows: updates.map((e) => [formatTimeOnly(e.at), String(e.equipment || ""), e.plate || "", meetingEventLabel(e.type), e.summary || ""])
+      },
+      {
+        title: "Tarefas",
+        columns: ["Hora", "Estado", "Tarefa"],
+        rows: tarefas.map((e) => [formatTimeOnly(e.at), e.done ? "Concluída" : "Pendente", e.summary || ""])
+      },
+      {
+        title: "Notas",
+        columns: ["Hora", "Nota / observação"],
+        rows: notas.map((e) => [formatTimeOnly(e.at), e.summary || ""])
       }
     ]
   };
@@ -3643,7 +3763,9 @@ function exportMeetingReportExcel(id) {
 function meetingReportText(meeting) {
   const ev = meeting.events || [];
   const novas = ev.filter((e) => e.type === "new");
-  const updates = ev.filter((e) => e.type !== "new");
+  const updates = ev.filter((e) => e.type === "update" || e.type === "close" || e.type === "reopen");
+  const tarefas = ev.filter((e) => e.type === "task");
+  const notas = ev.filter((e) => e.type === "note");
   const heading = (t) => `${t}\n${"─".repeat(Math.min(60, t.length))}`;
   const lines = [];
   lines.push(heading(`Relatório de Reunião — ${formatDate((meeting.startedAt || "").slice(0, 10))}`));
@@ -3656,6 +3778,14 @@ function meetingReportText(meeting) {
   lines.push("");
   lines.push(heading(`Atualizações em Avarias Abertas (${updates.length})`));
   if (updates.length) updates.forEach((e) => lines.push(`- Equip. ${e.equipment || "-"} · ${e.plate || "-"} · ${meetingEventLabel(e.type)}: ${e.summary || "-"}`));
+  else lines.push("- (nenhuma)");
+  lines.push("");
+  lines.push(heading(`Tarefas (${tarefas.length})`));
+  if (tarefas.length) tarefas.forEach((e) => lines.push(`- [${e.done ? "x" : " "}] ${e.summary || "-"}`));
+  else lines.push("- (nenhuma)");
+  lines.push("");
+  lines.push(heading(`Notas / Observações (${notas.length})`));
+  if (notas.length) notas.forEach((e) => lines.push(`- ${e.summary || "-"}`));
   else lines.push("- (nenhuma)");
   return lines.join("\n");
 }
@@ -3677,17 +3807,22 @@ function workbookToXlsxBase64(workbook) {
 function meetingReportHtml(meeting) {
   const ev = meeting.events || [];
   const novas = ev.filter((e) => e.type === "new");
-  const updates = ev.filter((e) => e.type !== "new");
+  const updates = ev.filter((e) => e.type === "update" || e.type === "close" || e.type === "reopen");
+  const tarefas = ev.filter((e) => e.type === "task");
+  const notas = ev.filter((e) => e.type === "note");
   const rows = (arr) => arr.length
     ? arr.map((e) => `<tr><td>${escapeHtml(formatTimeOnly(e.at))}</td><td>${escapeHtml(String(e.equipment || "-"))}</td><td>${escapeHtml(e.plate || "-")}</td><td>${escapeHtml(meetingEventLabel(e.type))}</td><td>${escapeHtml(e.summary || "-")}</td></tr>`).join("")
     : `<tr><td colspan="5">(nenhuma)</td></tr>`;
+  const simpleRows = (arr, withState) => arr.length
+    ? arr.map((e) => `<tr><td>${escapeHtml(formatTimeOnly(e.at))}</td>${withState ? `<td>${e.done ? "Concluída" : "Pendente"}</td>` : ""}<td>${escapeHtml(e.summary || "-")}</td></tr>`).join("")
+    : `<tr><td colspan="${withState ? 3 : 2}">(nenhuma)</td></tr>`;
   return `
     <div style="font-family:Arial,sans-serif;color:#111827">
       <h2 style="margin:0 0 4px">Relatório de reunião — ${escapeHtml(formatDate((meeting.startedAt || "").slice(0, 10)))}</h2>
       <p style="color:#6b7280;margin:0 0 12px">
         ${escapeHtml(formatTimeOnly(meeting.startedAt))}${meeting.endedAt ? ` – ${escapeHtml(formatTimeOnly(meeting.endedAt))} · ${meeting.durationMin} min` : " (a decorrer)"} · ${escapeHtml(meeting.operator || "-")}
       </p>
-      <p><strong>${novas.length}</strong> novas avarias · <strong>${updates.length}</strong> atualizações · <strong>${ev.length}</strong> ações</p>
+      <p><strong>${novas.length}</strong> novas avarias · <strong>${updates.length}</strong> atualizações · <strong>${tarefas.length}</strong> tarefas · <strong>${notas.length}</strong> notas</p>
       <h3 style="margin:14px 0 6px">Novas avarias (${novas.length})</h3>
       <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px">
         <thead><tr style="background:#e8f3f1"><th>Hora</th><th>Equip.</th><th>Matrícula</th><th>Ação</th><th>Resumo</th></tr></thead>
@@ -3697,6 +3832,16 @@ function meetingReportHtml(meeting) {
       <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px">
         <thead><tr style="background:#e8f3f1"><th>Hora</th><th>Equip.</th><th>Matrícula</th><th>Ação</th><th>Resumo</th></tr></thead>
         <tbody>${rows(updates)}</tbody>
+      </table>
+      <h3 style="margin:14px 0 6px">Tarefas (${tarefas.length})</h3>
+      <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#e8f3f1"><th>Hora</th><th>Estado</th><th>Tarefa</th></tr></thead>
+        <tbody>${simpleRows(tarefas, true)}</tbody>
+      </table>
+      <h3 style="margin:14px 0 6px">Notas / observações (${notas.length})</h3>
+      <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#e8f3f1"><th>Hora</th><th>Nota</th></tr></thead>
+        <tbody>${simpleRows(notas, false)}</tbody>
       </table>
     </div>`;
 }

@@ -447,7 +447,8 @@ function makeInitialState() {
       fleetSearch: "",
       auditSearch: "",
       vistoriaType: "",
-      vistoriaResult: ""
+      vistoriaResult: "",
+      ausenciaSort: "date"
     }
   };
 }
@@ -3277,18 +3278,52 @@ function renderAusenciaPlanning(monthAbs, monthISO) {
     </div>`;
 }
 
+function ausenciaVehicleText(a) {
+  const m = String(a.notes || "").match(/Paragem viatura:\s*(.+)$/i);
+  return m ? m[1].trim() : "";
+}
+
+function ausenciaEquipKey(a) {
+  const m = ausenciaVehicleText(a).match(/(\d{2,6})/);
+  return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER; // sem viatura vai para o fim
+}
+
+function sortAusencias(list, key) {
+  const arr = [...list];
+  if (key === "driver") {
+    arr.sort((a, b) => (a.driver || "").localeCompare(b.driver || "", "pt") || String(a.startAt).localeCompare(String(b.startAt)));
+  } else if (key === "equipment") {
+    arr.sort((a, b) => ausenciaEquipKey(a) - ausenciaEquipKey(b) || String(a.startAt).localeCompare(String(b.startAt)));
+  } else {
+    arr.sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)) || (a.driver || "").localeCompare(b.driver || "", "pt"));
+  }
+  return arr;
+}
+
 function renderAusenciaList(list) {
   if (!list.length) return `<div class="panel-sub"><p class="muted">Ainda não há ausências registadas.</p></div>`;
+  const sortKey = state.filters.ausenciaSort || "date";
+  const sorted = sortAusencias(list, sortKey);
   return `
     <div class="panel-sub">
-      <h3>Todas as ausências</h3>
+      <div class="panel-sub__head">
+        <h3>Todas as ausências</h3>
+        <label class="sort-select">Ordenar por
+          <select data-filter="ausenciaSort">
+            <option value="date" ${sortKey === "date" ? "selected" : ""}>Data</option>
+            <option value="equipment" ${sortKey === "equipment" ? "selected" : ""}>Equipamento</option>
+            <option value="driver" ${sortKey === "driver" ? "selected" : ""}>Motorista</option>
+          </select>
+        </label>
+      </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Motorista</th><th>Tipo</th><th>Início</th><th>Fim</th><th>Dias</th><th>Notas</th><th></th></tr></thead>
+          <thead><tr><th>Motorista</th><th>Viatura</th><th>Tipo</th><th>Início</th><th>Fim</th><th>Dias</th><th>Notas</th><th></th></tr></thead>
           <tbody>
-            ${list.map((a) => `
+            ${sorted.map((a) => `
               <tr>
                 <td><strong>${escapeHtml(a.driver)}</strong></td>
+                <td>${escapeHtml(ausenciaVehicleText(a) || "-")}</td>
                 <td><span class="cal-abs cal-abs--${absenceClass(a.type)}">${escapeHtml(a.type)}</span></td>
                 <td>${formatDate(a.startAt)}</td>
                 <td>${formatDate(a.endAt)}</td>

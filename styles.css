@@ -1299,3 +1299,15 @@ td strong { font-weight: 600; font-size: 14px; }
 .dock-form input { flex: 1; min-width: 0; min-height: 34px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 5px 9px; }
 .dock-send { border: none; background: var(--accent); color: #fff; border-radius: var(--radius-sm); padding: 0 12px; font-weight: 600; font-size: 13px; cursor: pointer; }
 .dock-send:hover { background: var(--accent-strong); }
+
+/* ── Ausências: cabeçalho da lista com ordenação ── */
+.panel-sub__head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.panel-sub__head h3 { margin: 0; }
+.sort-select { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.sort-select select {
+  min-height: 34px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  padding: 4px 8px; background: #fff; font-size: 13px; color: var(--ink);
+}

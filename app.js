@@ -448,7 +448,8 @@ function makeInitialState() {
       auditSearch: "",
       vistoriaType: "",
       vistoriaResult: "",
-      ausenciaSort: "date"
+      ausenciaSort: "date",
+      ausenciaSearch: ""
     }
   };
 }
@@ -3300,22 +3301,34 @@ function sortAusencias(list, key) {
   return arr;
 }
 
+function ausenciaSearchNorm(s) {
+  return normalizeText(s).replace(/[^a-z0-9]/g, "");
+}
+
 function renderAusenciaList(list) {
   if (!list.length) return `<div class="panel-sub"><p class="muted">Ainda não há ausências registadas.</p></div>`;
   const sortKey = state.filters.ausenciaSort || "date";
-  const sorted = sortAusencias(list, sortKey);
+  const term = ausenciaSearchNorm(state.filters.ausenciaSearch || "");
+  const filtered = term
+    ? list.filter((a) => ausenciaSearchNorm(`${a.driver} ${a.type} ${a.notes} ${a.startAt} ${a.endAt}`).includes(term))
+    : list;
+  const sorted = sortAusencias(filtered, sortKey);
   return `
     <div class="panel-sub">
       <div class="panel-sub__head">
-        <h3>Todas as ausências</h3>
-        <label class="sort-select">Ordenar por
-          <select data-filter="ausenciaSort">
-            <option value="date" ${sortKey === "date" ? "selected" : ""}>Data</option>
-            <option value="equipment" ${sortKey === "equipment" ? "selected" : ""}>Equipamento</option>
-            <option value="driver" ${sortKey === "driver" ? "selected" : ""}>Motorista</option>
-          </select>
-        </label>
+        <h3>Todas as ausências${term ? ` · ${sorted.length} resultado(s)` : ""}</h3>
+        <div class="panel-sub__tools">
+          <input type="search" class="ausencia-search" data-filter="ausenciaSearch" value="${escapeAttr(state.filters.ausenciaSearch || "")}" placeholder="Pesquisar (matrícula, motorista, viatura…)">
+          <label class="sort-select">Ordenar por
+            <select data-filter="ausenciaSort">
+              <option value="date" ${sortKey === "date" ? "selected" : ""}>Data</option>
+              <option value="equipment" ${sortKey === "equipment" ? "selected" : ""}>Equipamento</option>
+              <option value="driver" ${sortKey === "driver" ? "selected" : ""}>Motorista</option>
+            </select>
+          </label>
+        </div>
       </div>
+      ${sorted.length ? "" : '<p class="muted" style="padding:6px 2px">Sem resultados para esta pesquisa.</p>'}
       <div class="table-wrap">
         <table>
           <thead><tr><th>Motorista</th><th>Viatura</th><th>Tipo</th><th>Início</th><th>Fim</th><th>Dias</th><th>Notas</th><th></th></tr></thead>

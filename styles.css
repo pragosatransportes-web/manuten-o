@@ -1311,3 +1311,12 @@ td strong { font-weight: 600; font-size: 14px; }
   min-height: 34px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
   padding: 4px 8px; background: #fff; font-size: 13px; color: var(--ink);
 }
+
+/* Ausências: barra de pesquisa + ordenação */
+.panel-sub__tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ausencia-search {
+  min-height: 34px; min-width: 240px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  padding: 5px 10px; background: #fff; font-size: 13px;
+}
+.ausencia-search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15,118,110,0.12); }

@@ -10,6 +10,7 @@ const FLEET_NA_DATE = "9999-12-31";
 // não podemos incluir o campo nas gravações (partiria todo o upsert da frota).
 // Detetado no carregamento remoto: ver loadRemoteState().
 let remoteFleetHasDriver = true;
+let remoteFleetHasRevision = true;
 
 // Tipos de ausência de motorista (calendário de ausências, migração 003).
 const ABSENCE_TYPES = ["Férias", "Baixa médica"];
@@ -580,6 +581,7 @@ async function loadRemoteState() {
   // vierem sem a chave, não a enviamos nas gravações para não partir o upsert.
   if (fleetResult.data.length) {
     remoteFleetHasDriver = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "driver");
+    remoteFleetHasRevision = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "revision_at");
   }
 
   if (!fleetResult.data.length && !breakdownsResult.data.length) {
@@ -681,6 +683,9 @@ function applyRemoteRow(payload, collection, mapper) {
     // e apagaria o valor local — preserva-o até a migração 002 ser corrida.
     if (collection === "fleet" && !remoteFleetHasDriver) {
       item.driver = state.fleet[index].driver || item.driver;
+    }
+    if (collection === "fleet" && !remoteFleetHasRevision) {
+      item.revisionAt = state.fleet[index].revisionAt || item.revisionAt;
     }
     state[collection][index] = item;
   } else {
@@ -1445,6 +1450,8 @@ function appFleetToDb(item) {
   };
   // Só envia "driver" quando a coluna já existe na base (migração 002 corrida).
   if (remoteFleetHasDriver) row.driver = item.driver || null;
+  // "Revisão" (só tratores) — só envia quando a coluna existe na base (migração 004).
+  if (remoteFleetHasRevision) row.revision_at = item.revisionAt || null;
   return row;
 }
 
@@ -1466,7 +1473,8 @@ function dbFleetToApp(row) {
     inspectionAt: row.inspection_at || null,
     tachographAt: row.tachograph_calibration_at || null,
     compressorReviewAt: row.compressor_review_at || null,
-    wheelHubReviewAt: row.wheel_hub_review_at || null
+    wheelHubReviewAt: row.wheel_hub_review_at || null,
+    revisionAt: row.revision_at || null
   };
 }
 
@@ -1801,7 +1809,8 @@ const DASHBOARD_DATE_TABS = [
   ["inspectionAt", "Inspeção"],
   ["tachographAt", "Aferição tacógrafo"],
   ["compressorReviewAt", "Revisão compressor"],
-  ["wheelHubReviewAt", "Cubos de roda"]
+  ["wheelHubReviewAt", "Cubos de roda"],
+  ["revisionAt", "Revisão"]
 ];
 
 function renderDashboard() {
@@ -2534,6 +2543,7 @@ function renderFleet() {
               <th>Aferição tacógrafo</th>
               <th>Revisão compressor</th>
               <th>Cubos de roda</th>
+              <th>Revisão</th>
               <th></th>
             </tr>
           </thead>
@@ -2553,6 +2563,7 @@ function renderFleet() {
                 <td>${renderFleetDateCell(item, "tachographAt", "Data de aferição tacógrafo")}</td>
                 <td>${renderFleetDateCell(item, "compressorReviewAt", "Data de revisão compressor")}</td>
                 <td>${renderFleetDateCell(item, "wheelHubReviewAt", "Data de revisão cubos de roda")}</td>
+                <td>${isTratorFleet(item) ? renderFleetDateCell(item, "revisionAt", "Data de revisão") : '<span class="not-applicable" title="Só aplicável a tratores">—</span>'}</td>
                 <td>
                   <button class="icon-button" type="button" data-action="delete-fleet" data-equipment="${escapeAttr(item.equipment)}" title="Remover viatura">
                     <span data-icon="trash"></span>
@@ -2602,6 +2613,11 @@ function renderFleetDateCell(item, field, label) {
 
 function isFleetNA(value) {
   return value === FLEET_NA_DATE;
+}
+
+// Categoria "Trator" (pela descrição padronizada da frota).
+function isTratorFleet(item) {
+  return normalizeText(item.description || "").trim() === "trator";
 }
 
 function renderFleetCompanyCell(item) {
@@ -2758,7 +2774,8 @@ async function handleNewFleet(form) {
     inspectionAt: null,
     tachographAt: null,
     compressorReviewAt: null,
-    wheelHubReviewAt: null
+    wheelHubReviewAt: null,
+    revisionAt: null
   };
 
   state.fleet.push(item);
@@ -3100,7 +3117,8 @@ function logFleetAudit(item, field, previous, next) {
     inspectionAt: "Data de inspeção",
     tachographAt: "Data de aferição tacógrafo",
     compressorReviewAt: "Data de revisão compressor",
-    wheelHubReviewAt: "Data revisão cubos de roda"
+    wheelHubReviewAt: "Data revisão cubos de roda",
+    revisionAt: "Data de revisão"
   };
   const auditEvent = {
     id: `FROTA-${item.equipment}-${field}-${Date.now()}`,
@@ -3164,7 +3182,8 @@ function fleetDueList(f) {
     { label: "Inspeção", value: f.inspectionAt },
     { label: "Tacógrafo", value: f.tachographAt },
     { label: "Compressor", value: f.compressorReviewAt },
-    { label: "Cubos", value: f.wheelHubReviewAt }
+    { label: "Cubos", value: f.wheelHubReviewAt },
+    ...(isTratorFleet(f) ? [{ label: "Revisão", value: f.revisionAt }] : [])
   ].filter((x) => x.value && !isFleetNA(x.value));
 }
 
@@ -3476,7 +3495,8 @@ function getFleetDateAlerts() {
     ["inspectionAt", "Inspeção"],
     ["tachographAt", "Aferição tacógrafo"],
     ["compressorReviewAt", "Revisão compressor"],
-    ["wheelHubReviewAt", "Cubos de roda"]
+    ["wheelHubReviewAt", "Cubos de roda"],
+    ["revisionAt", "Revisão"]
   ];
 
   return state.fleet
@@ -4034,7 +4054,9 @@ function buildFleetExport() {
           "Data revisão compressor",
           "Dias compressor",
           "Data cubos roda",
-          "Dias cubos roda"
+          "Dias cubos roda",
+          "Data revisão (trator)",
+          "Dias revisão"
         ],
         rows: getFilteredFleet().map((item) => [
           item.equipment,
@@ -4052,7 +4074,9 @@ function buildFleetExport() {
           fleetDateForExport(item.compressorReviewAt),
           formatDueForExport(item.compressorReviewAt),
           fleetDateForExport(item.wheelHubReviewAt),
-          formatDueForExport(item.wheelHubReviewAt)
+          formatDueForExport(item.wheelHubReviewAt),
+          isTratorFleet(item) ? fleetDateForExport(item.revisionAt) : "—",
+          isTratorFleet(item) ? formatDueForExport(item.revisionAt) : "—"
         ])
       }
     ]

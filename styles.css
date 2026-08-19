@@ -1293,6 +1293,20 @@ td strong { font-weight: 600; font-size: 14px; }
 .dock-check { border: none; background: none; cursor: pointer; font-size: 15px; line-height: 1; padding: 0; }
 .dock-ic { font-size: 14px; }
 .dock-item time { color: var(--muted-light); font-size: 11px; white-space: nowrap; }
+.dock-meta { display: inline-flex; align-items: center; gap: 4px; }
+.dock-mini {
+  border: none; background: none; cursor: pointer; font-size: 12px; line-height: 1;
+  padding: 2px; border-radius: 4px; opacity: .55; transition: opacity .12s, background .12s;
+}
+.dock-mini:hover { opacity: 1; background: rgba(0,0,0,.06); }
+.dock-item:hover .dock-mini { opacity: .8; }
+.dock-item--edit { display: flex; align-items: center; gap: 6px; }
+.dock-edit-input {
+  flex: 1; min-width: 0; min-height: 30px; border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm); padding: 4px 8px; font-size: 13px;
+}
+.timeline-item { position: relative; }
+.timeline-actions { display: inline-flex; gap: 4px; margin-top: 4px; }
 
 .dock-form { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--surface-soft); }
 .dock-type { min-height: 34px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 4px 6px; font-size: 13px; }

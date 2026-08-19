@@ -227,6 +227,23 @@ document.addEventListener("click", async (event) => {
   if (action === "dock-task-toggle") {
     toggleMeetingTask(button.dataset.id);
   }
+  if (action === "dock-item-edit") {
+    state.dockEditId = button.dataset.id;
+    updateMeetingDock();
+  }
+  if (action === "dock-item-edit-cancel") {
+    state.dockEditId = "";
+    updateMeetingDock();
+  }
+  if (action === "dock-item-delete") {
+    deleteMeetingEvent("", button.dataset.id);
+  }
+  if (action === "meeting-event-edit") {
+    editMeetingEventFromReport(button.dataset.mid, button.dataset.id);
+  }
+  if (action === "meeting-event-delete") {
+    deleteMeetingEvent(button.dataset.mid, button.dataset.id);
+  }
   if (action === "meeting-consult") {
     state.meetingView = "consult";
     state.currentView = "meeting";
@@ -378,6 +395,11 @@ document.addEventListener("submit", async (event) => {
     const data = new FormData(form);
     addMeetingNote(String(data.get("type") || "note"), String(data.get("text") || ""));
   }
+  if (form.dataset.form === "dock-edit") {
+    event.preventDefault();
+    const data = new FormData(form);
+    saveMeetingNoteEdit(String(data.get("id") || ""), String(data.get("text") || ""));
+  }
   if (form.dataset.form === "new-ausencia") {
     event.preventDefault();
     await handleNewAusencia(form);
@@ -429,6 +451,7 @@ function makeInitialState() {
     selectedMeetingId: "",
     meetingDockCollapsed: false,
     dockNoteType: "note",
+    dockEditId: "",
     meetings: [],
     dashboardDateTab: "inspectionAt",
     sourceGeneratedAt: seed.generatedAt || "",
@@ -1709,14 +1732,29 @@ function updateMeetingDock() {
         <button class="dock-min" type="button" data-action="dock-toggle" title="Minimizar">–</button>
       </div>
       <div class="dock-log" id="dock-log">
-        ${entries.length ? entries.map((e) => `
+        ${entries.length ? entries.map((e) => {
+          if (state.dockEditId === e.id) {
+            return `
+          <form class="dock-item dock-item--edit" data-form="dock-edit">
+            <input type="hidden" name="id" value="${escapeAttr(e.id)}">
+            <input class="dock-edit-input" name="text" value="${escapeAttr(e.summary || "")}" autocomplete="off" required>
+            <button class="dock-mini dock-mini--ok" type="submit" title="Guardar">✔️</button>
+            <button class="dock-mini" type="button" data-action="dock-item-edit-cancel" title="Cancelar">✖️</button>
+          </form>`;
+          }
+          return `
           <div class="dock-item dock-item--${e.type}${e.done ? " done" : ""}">
             ${e.type === "task"
               ? `<button class="dock-check" type="button" data-action="dock-task-toggle" data-id="${escapeAttr(e.id)}" title="Marcar concluída">${e.done ? "✅" : "⬜"}</button>`
               : `<span class="dock-ic">🗒️</span>`}
             <span class="dock-text">${escapeHtml(e.summary || "")}</span>
-            <time>${escapeHtml(formatTimeOnly(e.at))}</time>
-          </div>`).join("") : `<p class="dock-empty">Sem notas nem tarefas ainda. Escreve abaixo. ✍️</p>`}
+            <span class="dock-meta">
+              <time>${escapeHtml(formatTimeOnly(e.at))}</time>
+              <button class="dock-mini" type="button" data-action="dock-item-edit" data-id="${escapeAttr(e.id)}" title="Editar">✏️</button>
+              <button class="dock-mini" type="button" data-action="dock-item-delete" data-id="${escapeAttr(e.id)}" title="Eliminar">🗑️</button>
+            </span>
+          </div>`;
+        }).join("") : `<p class="dock-empty">Sem notas nem tarefas ainda. Escreve abaixo. ✍️</p>`}
       </div>
       <form class="dock-form" data-form="dock-note">
         <select name="type" class="dock-type" aria-label="Tipo">
@@ -1727,8 +1765,14 @@ function updateMeetingDock() {
         <button class="dock-send" type="submit">Adicionar</button>
       </form>
     </div>`;
-  const log = document.querySelector("#dock-log");
-  if (log) log.scrollTop = log.scrollHeight;
+  const editInput = dock.querySelector(".dock-edit-input");
+  if (editInput) {
+    editInput.focus();
+    editInput.setSelectionRange(editInput.value.length, editInput.value.length);
+  } else {
+    const log = document.querySelector("#dock-log");
+    if (log) log.scrollTop = log.scrollHeight;
+  }
 }
 
 function addMeetingNote(type, text) {
@@ -1759,6 +1803,64 @@ function toggleMeetingTask(id) {
   e.done = !e.done;
   saveState();
   updateMeetingDock();
+  persistRemoteSafely(() => persistMeetingRemote(m));
+}
+
+// Encontra uma reunião por id (a decorrer ou encerrada).
+function findMeetingById(id) {
+  return state.meetings.find((x) => String(x.id) === String(id)) || null;
+}
+
+// Guarda a edição do texto de uma nota/tarefa (dock da reunião a decorrer).
+function saveMeetingNoteEdit(id, text) {
+  const m = getActiveMeeting();
+  const clean = String(text || "").trim();
+  if (!m) return;
+  const e = (m.events || []).find((x) => x.id === id);
+  if (!e) return;
+  if (!clean) { showToast("O texto não pode ficar vazio."); return; }
+  e.summary = clean;
+  state.dockEditId = "";
+  saveState();
+  updateMeetingDock();
+  showToast("Atualizado.");
+  persistRemoteSafely(() => persistMeetingRemote(m));
+}
+
+// Elimina um registo (nota/tarefa/nova avaria/atualização) de uma reunião.
+// Não apaga a avaria em si — remove apenas o registo do relatório da reunião.
+function deleteMeetingEvent(meetingId, eventId) {
+  const m = meetingId ? findMeetingById(meetingId) : getActiveMeeting();
+  if (!m) return;
+  const e = (m.events || []).find((x) => x.id === eventId);
+  if (!e) return;
+  const isLog = e.type !== "note" && e.type !== "task";
+  const label = e.type === "task" ? "esta tarefa" : e.type === "note" ? "esta nota" : "este registo";
+  const extra = isLog ? "\n\n(Remove apenas o registo do relatório; a avaria em si não é afetada.)" : "";
+  if (!window.confirm(`Eliminar ${label}?${extra}`)) return;
+  m.events = (m.events || []).filter((x) => x.id !== eventId);
+  if (state.dockEditId === eventId) state.dockEditId = "";
+  saveState();
+  updateMeetingDock();
+  if (state.currentView === "meeting" && state.meetingView === "report") render();
+  showToast("Eliminado.");
+  persistRemoteSafely(() => persistMeetingRemote(m));
+}
+
+// Edita o texto de um registo a partir do relatório (reunião a decorrer ou encerrada).
+function editMeetingEventFromReport(meetingId, eventId) {
+  const m = findMeetingById(meetingId);
+  if (!m) return;
+  const e = (m.events || []).find((x) => x.id === eventId);
+  if (!e) return;
+  const next = window.prompt("Editar texto:", e.summary || "");
+  if (next === null) return;
+  const clean = String(next).trim();
+  if (!clean) { showToast("O texto não pode ficar vazio."); return; }
+  e.summary = clean;
+  saveState();
+  render();
+  showToast("Atualizado.");
   persistRemoteSafely(() => persistMeetingRemote(m));
 }
 
@@ -2035,15 +2137,22 @@ function renderMeetingReport() {
   const updates = ev.filter((e) => e.type === "update" || e.type === "close" || e.type === "reopen");
   const tarefas = ev.filter((e) => e.type === "task");
   const notas = ev.filter((e) => e.type === "note");
+  const evActions = (e) => `
+      <span class="timeline-actions">
+        <button class="dock-mini" type="button" data-action="meeting-event-edit" data-mid="${escapeAttr(m.id)}" data-id="${escapeAttr(e.id)}" title="Editar">✏️</button>
+        <button class="dock-mini" type="button" data-action="meeting-event-delete" data-mid="${escapeAttr(m.id)}" data-id="${escapeAttr(e.id)}" title="Eliminar">🗑️</button>
+      </span>`;
   const rowsHtml = (arr) => arr.length ? arr.map((e) => `
     <article class="timeline-item">
       <time>${formatTimeOnly(e.at)} · Equip. ${escapeHtml(String(e.equipment || "-"))} · ${escapeHtml(e.plate || "-")} · ${escapeHtml(meetingEventLabel(e.type))}</time>
       <p>${escapeHtml(e.summary || "-")}</p>
+      ${evActions(e)}
     </article>`).join("") : '<p class="empty-state">Sem registos.</p>';
   const noteRows = (arr) => arr.length ? arr.map((e) => `
     <article class="timeline-item">
       <time>${formatTimeOnly(e.at)}${e.type === "task" ? (e.done ? " · ✅ concluída" : " · ⬜ pendente") : ""}</time>
       <p>${escapeHtml(e.summary || "-")}</p>
+      ${evActions(e)}
     </article>`).join("") : '<p class="empty-state">Sem registos.</p>';
 
   return `

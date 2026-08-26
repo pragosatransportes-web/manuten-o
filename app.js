@@ -353,6 +353,9 @@ document.addEventListener("change", async (event) => {
   if (target.dataset.fleetDescription) {
     await updateFleetDescription(target.dataset.equipment, target.value);
   }
+  if (target.id === "new-description-filter") {
+    repopulatePlateOptions(target.value);
+  }
   if (target.id === "new-plate") {
     fillFleetMatchFromPlate(target.value, true);
   }
@@ -2460,6 +2463,7 @@ function renderBreakdowns() {
 function renderNewBreakdown() {
   const today = todayISO();
   const link = state.avariaFromVistoria;
+  const selectedDesc = link?.plate ? (findFleetByPlate(link.plate)?.description || "").trim() : "";
   const descPrefill = link
     ? `[Vistoria ${formatDate(link.date)}] ${link.item}${link.state ? ` (${link.state})` : ""}${link.note ? ` — ${link.note}` : ""}`
     : "";
@@ -2481,8 +2485,18 @@ function renderNewBreakdown() {
       <form class="data-form" data-form="new-breakdown">
         <div class="form-grid">
           <label class="field">
+            <span>Descrição</span>
+            <select id="new-description-filter" name="descriptionFilter">
+              <option value="">Todas as descrições</option>
+              ${fleetDescriptions().map((desc) => `<option value="${escapeAttr(desc)}" ${desc === selectedDesc ? "selected" : ""}>${escapeHtml(desc)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
             <span>Matrícula</span>
-            <input id="new-plate" name="plate" list="plate-options" autocomplete="off" value="${escapeAttr(link?.plate || "")}" required>
+            <select id="new-plate" name="plate" required>
+              <option value="">Selecione a matrícula</option>
+              ${fleetPlateOptionsHtml(selectedDesc, link?.plate)}
+            </select>
           </label>
           <label class="field">
             <span>Equipamento</span>
@@ -2550,11 +2564,39 @@ function renderNewBreakdown() {
           </button>
         </div>
       </form>
-      <datalist id="plate-options">
-        ${state.fleet.filter((item) => item.plate).map((item) => `<option value="${escapeAttr(item.plate)}">${escapeHtml(`Equip. ${item.equipment || "-"} · ${item.description || ""}`)}</option>`).join("")}
-      </datalist>
     </section>
   `;
+}
+
+function fleetDescriptions() {
+  return [...new Set(
+    state.fleet
+      .filter((item) => item.plate)
+      .map((item) => (item.description || "").trim())
+      .filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b, "pt"));
+}
+
+function fleetPlateOptionsHtml(descFilter, selectedPlate) {
+  const filter = (descFilter || "").trim();
+  const selected = normalizePlate(selectedPlate || "");
+  return state.fleet
+    .filter((item) => item.plate && (!filter || (item.description || "").trim() === filter))
+    .map((item) => {
+      const isSel = selected && normalizePlate(item.plate) === selected ? "selected" : "";
+      const label = `${item.plate} · Equip. ${item.equipment || "-"}${item.description ? ` · ${item.description}` : ""}`;
+      return `<option value="${escapeAttr(item.plate)}" ${isSel}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+}
+
+function repopulatePlateOptions(descFilter) {
+  const plate = document.querySelector("#new-plate");
+  const equipment = document.querySelector("#new-equipment");
+  if (!plate) return;
+  plate.innerHTML = `<option value="">Selecione a matrícula</option>` + fleetPlateOptionsHtml(descFilter, "");
+  plate.value = "";
+  if (equipment) equipment.value = "";
 }
 
 function renderFleet() {

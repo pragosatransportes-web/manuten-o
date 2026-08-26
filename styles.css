@@ -290,6 +290,114 @@ input[readonly] { color: var(--muted); background: #f9fafb; }
 .toolbar input  { flex: 1 1 200px; }
 .toolbar select { flex: 0 1 180px; }
 
+/* ── Filtros multi-seleção (checkbox) ───────────── */
+.filter-menu {
+  position: relative;
+  flex: 0 1 auto;
+}
+
+.filter-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 28px 7px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+  white-space: nowrap;
+  position: relative;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+
+.filter-menu > summary::-webkit-details-marker { display: none; }
+
+.filter-menu > summary::after {
+  content: "▾";
+  position: absolute;
+  right: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.filter-menu[open] > summary {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(15,118,110,0.12);
+}
+
+.filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.filter-menu__panel {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 220px;
+  max-height: 320px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(15,23,42,0.16);
+}
+
+.filter-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.filter-option:hover { background: var(--surface-soft); }
+
+.filter-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.filter-clear {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: none;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.filter-clear:hover { text-decoration: underline; }
+
 /* ── Meeting list ───────────────────────────────── */
 .meeting-list {
   display: grid;

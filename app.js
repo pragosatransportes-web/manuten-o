@@ -194,14 +194,15 @@ document.addEventListener("click", async (event) => {
     const statusValue = button.dataset.statusValue || "";
     // Reset all filters first
     state.filters.search    = "";
-    state.filters.status    = statusValue;
-    state.filters.situation = "";
-    state.filters.type      = "";
+    state.filters.status    = statusValue ? [statusValue] : [];
+    state.filters.situation = [];
+    state.filters.type      = [];
+    state.filters.company   = [];
     // Apply the specific filter for this card
     if (filterKey === "search")    state.filters.search    = filterValue;
-    if (filterKey === "situation") state.filters.situation = filterValue;
-    if (filterKey === "status")    state.filters.status    = filterValue;
-    if (filterKey === "type")      state.filters.type      = filterValue;
+    if (filterKey === "situation") state.filters.situation = [filterValue];
+    if (filterKey === "status")    state.filters.status    = [filterValue];
+    if (filterKey === "type")      state.filters.type      = [filterValue];
     state.currentView = "breakdowns";
     saveState();
     render();
@@ -341,6 +342,9 @@ document.addEventListener("change", async (event) => {
   if (target.dataset.filter) {
     setFilter(target.dataset.filter, target.value);
   }
+  if (target.dataset.filterMulti) {
+    toggleMultiFilter(target.dataset.filterMulti, target.value);
+  }
   if (target.dataset.fleetDate) {
     await updateFleetDate(target.dataset.equipment, target.dataset.fleetDate, target.value);
   }
@@ -372,6 +376,24 @@ document.addEventListener("change", async (event) => {
       label.classList.toggle("has-photos", n > 0);
       label.title = n > 0 ? `${n} foto(s) selecionada(s)` : "Anexar foto (opcional)";
     }
+  }
+});
+
+document.addEventListener("click", (event) => {
+  const clearBtn = event.target.closest("[data-filter-clear]");
+  if (clearBtn) {
+    event.preventDefault();
+    clearMultiFilter(clearBtn.dataset.filterClear);
+    return;
+  }
+  const summary = event.target.closest("summary[data-filter-summary]");
+  if (summary) {
+    const details = summary.parentElement;
+    openFilterMenu = details.open ? null : summary.dataset.filterSummary;
+    return;
+  }
+  if (!event.target.closest(".filter-menu")) {
+    openFilterMenu = null;
   }
 });
 
@@ -467,10 +489,10 @@ function makeInitialState() {
     audit: buildAudit(breakdowns),
     filters: {
       search: "",
-      status: "",
-      situation: "",
-      type: "",
-      company: "",
+      status: [],
+      situation: [],
+      type: [],
+      company: [],
       fleetSearch: "",
       auditSearch: "",
       vistoriaType: "",
@@ -2216,6 +2238,31 @@ function renderMetrics(metrics) {
   `;
 }
 
+let openFilterMenu = null;
+
+function filterArray(name) {
+  const value = state.filters[name];
+  return Array.isArray(value) ? value : (value ? [value] : []);
+}
+
+function renderMultiFilter(name, label, values) {
+  const selected = filterArray(name);
+  const options = values.map((value) => {
+    const checked = selected.includes(value) ? "checked" : "";
+    return `<label class="filter-option"><input type="checkbox" data-filter-multi="${escapeAttr(name)}" value="${escapeAttr(value)}" ${checked}><span>${escapeHtml(value)}</span></label>`;
+  }).join("");
+  const badge = selected.length ? ` <span class="filter-count">${selected.length}</span>` : "";
+  const clear = selected.length ? `<button type="button" class="filter-clear" data-filter-clear="${escapeAttr(name)}">Limpar</button>` : "";
+  return `
+    <details class="filter-menu" ${openFilterMenu === name ? "open" : ""}>
+      <summary data-filter-summary="${escapeAttr(name)}">${escapeHtml(label)}${badge}</summary>
+      <div class="filter-menu__panel">
+        ${options}
+        ${clear}
+      </div>
+    </details>`;
+}
+
 function renderFilters(context) {
   const searchPlaceholder = context === "meeting" ? "Pesquisar equipamento, matrícula, oficina ou nota" : "Pesquisar avarias";
   const sortButton = context === "breakdowns" ? `
@@ -2226,22 +2273,10 @@ function renderFilters(context) {
   return `
     <div class="toolbar">
       <input type="search" data-filter="search" value="${escapeAttr(state.filters.search)}" placeholder="${searchPlaceholder}">
-      <select data-filter="status" aria-label="Estado">
-        <option value="">Todos os estados</option>
-        ${options.statuses.map((status) => `<option value="${escapeAttr(status)}" ${state.filters.status === status ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}
-      </select>
-      <select data-filter="situation" aria-label="Situação">
-        <option value="">Todas as situações</option>
-        ${options.situations.map((situation) => `<option value="${escapeAttr(situation)}" ${state.filters.situation === situation ? "selected" : ""}>${escapeHtml(situation)}</option>`).join("")}
-      </select>
-      <select data-filter="type" aria-label="Tipo">
-        <option value="">Todos os tipos</option>
-        ${options.types.map((type) => `<option value="${escapeAttr(type)}" ${state.filters.type === type ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
-      </select>
-      <select data-filter="company" aria-label="Empresa">
-        <option value="">Todas as empresas</option>
-        ${["CPSA", "PTSA"].map((company) => `<option value="${escapeAttr(company)}" ${state.filters.company === company ? "selected" : ""}>${escapeHtml(company)}</option>`).join("")}
-      </select>
+      ${renderMultiFilter("status", "Estados", options.statuses)}
+      ${renderMultiFilter("situation", "Situações", options.situations)}
+      ${renderMultiFilter("type", "Tipos", options.types)}
+      ${renderMultiFilter("company", "Empresas", ["CPSA", "PTSA"])}
       ${sortButton}
     </div>
   `;
@@ -3683,10 +3718,14 @@ function daysUntil(dateValue) {
 function getFilteredBreakdowns(activeOnly) {
   const search = normalizeText(state.filters.search);
   let list = state.breakdowns.filter((item) => !activeOnly || item.status !== "Concluido");
-  if (state.filters.status) list = list.filter((item) => item.status === state.filters.status);
-  if (state.filters.situation) list = list.filter((item) => item.situation === state.filters.situation);
-  if (state.filters.type) list = list.filter((item) => item.type === state.filters.type);
-  if (state.filters.company) list = list.filter((item) => getBreakdownCompany(item) === state.filters.company);
+  const statusF = filterArray("status");
+  const situationF = filterArray("situation");
+  const typeF = filterArray("type");
+  const companyF = filterArray("company");
+  if (statusF.length) list = list.filter((item) => statusF.includes(item.status));
+  if (situationF.length) list = list.filter((item) => situationF.includes(item.situation));
+  if (typeF.length) list = list.filter((item) => typeF.includes(item.type));
+  if (companyF.length) list = list.filter((item) => companyF.includes(getBreakdownCompany(item)));
   if (search) {
     list = list.filter((item) => {
       const haystack = normalizeText(`${item.id} ${item.equipment} ${item.plate} ${item.type} ${item.status} ${item.situation} ${item.workshop} ${item.description} ${item.lastNote} ${formatAttachmentNames(item.attachments)}`);
@@ -3878,6 +3917,23 @@ function setFilter(name, value) {
   state.filters[name] = value;
   saveState();
   render(`[data-filter="${name}"]`);
+}
+
+function toggleMultiFilter(name, value) {
+  const current = filterArray(name);
+  state.filters[name] = current.includes(value)
+    ? current.filter((item) => item !== value)
+    : [...current, value];
+  openFilterMenu = name;
+  saveState();
+  render();
+}
+
+function clearMultiFilter(name) {
+  state.filters[name] = [];
+  openFilterMenu = name;
+  saveState();
+  render();
 }
 
 function exportActivePanelExcel() {

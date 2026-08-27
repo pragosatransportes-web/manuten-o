@@ -141,13 +141,13 @@ const ADMIN_STORAGE_KEY = "avarias-admin-unlocked";
 let isAdmin = false;
 try { isAdmin = sessionStorage.getItem(ADMIN_STORAGE_KEY) === "1"; } catch (e) { /* storage indisponível */ }
 
+// Só as ações de ELIMINAR ficam reservadas ao Administrador.
+// Tudo o resto (atualizar estados, concluir, editar, acrescentar) é livre.
 const ADMIN_ACTIONS = new Set([
-  "delete-fleet", "delete-ausencia", "delete-vistoria", "edit-vistoria",
-  "meeting-event-edit", "meeting-event-delete", "dock-item-edit", "dock-item-delete",
-  "close-breakdown", "close-meeting", "close-meeting-row", "delete-meeting",
-  "fleet-date-na", "fleet-date-reset"
+  "delete-fleet", "delete-ausencia", "delete-vistoria",
+  "meeting-event-delete", "dock-item-delete", "delete-meeting"
 ]);
-const ADMIN_FORMS = new Set(["quick-update", "dock-edit"]);
+const ADMIN_FORMS = new Set();
 
 async function sha256Hex(text) {
   const data = new TextEncoder().encode(text);
@@ -419,9 +419,6 @@ document.addEventListener("change", async (event) => {
   }
   if (target.dataset.filterMulti) {
     toggleMultiFilter(target.dataset.filterMulti, target.value);
-  }
-  if (target.dataset.fleetDate || target.dataset.fleetCompany || target.dataset.fleetDriver || target.dataset.fleetDescription) {
-    if (!requireAdmin()) { render(); return; }
   }
   if (target.dataset.fleetDate) {
     await updateFleetDate(target.dataset.equipment, target.dataset.fleetDate, target.value);
@@ -2284,7 +2281,7 @@ function meetingConsultRow(m) {
     <td>${escapeHtml(m.operator || "-")}</td>
     <td class="row-actions">
       <button class="icon-button" type="button" data-action="select-meeting" data-id="${escapeAttr(m.id)}" title="Ver relatório"><span data-icon="eye"></span></button>
-      ${!ended ? `<button class="icon-button" type="button" data-action="close-meeting-row" data-id="${escapeAttr(m.id)}" title="Encerrar reunião (Administrador)"><span data-icon="check"></span></button>` : ""}
+      ${!ended ? `<button class="icon-button" type="button" data-action="close-meeting-row" data-id="${escapeAttr(m.id)}" title="Encerrar reunião"><span data-icon="check"></span></button>` : ""}
       <button class="icon-button danger" type="button" data-action="delete-meeting" data-id="${escapeAttr(m.id)}" title="Eliminar reunião (Administrador)"><span data-icon="trash"></span></button>
     </td>
   </tr>`;

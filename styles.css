@@ -297,34 +297,15 @@ input[readonly] { color: var(--muted); background: #f9fafb; }
   background: rgba(15,118,110,0.08);
 }
 
-/* Quando NÃO está em modo Administrador, esconder editar/eliminar/concluir */
+/* Sem modo Administrador, esconder apenas os botões de ELIMINAR.
+   Atualizar estados, concluir, editar e acrescentar ficam livres. */
 body:not(.admin-mode) [data-action="delete-fleet"],
 body:not(.admin-mode) [data-action="delete-ausencia"],
 body:not(.admin-mode) [data-action="delete-vistoria"],
-body:not(.admin-mode) [data-action="edit-vistoria"],
-body:not(.admin-mode) [data-action="meeting-event-edit"],
 body:not(.admin-mode) [data-action="meeting-event-delete"],
-body:not(.admin-mode) [data-action="dock-item-edit"],
 body:not(.admin-mode) [data-action="dock-item-delete"],
-body:not(.admin-mode) [data-action="close-breakdown"],
-body:not(.admin-mode) [data-action="close-meeting"],
-body:not(.admin-mode) [data-action="close-meeting-row"],
-body:not(.admin-mode) [data-action="delete-meeting"],
-body:not(.admin-mode) [data-action="fleet-date-na"],
-body:not(.admin-mode) [data-action="fleet-date-reset"],
-body:not(.admin-mode) form[data-form="quick-update"],
-body:not(.admin-mode) form[data-form="dock-edit"] {
+body:not(.admin-mode) [data-action="delete-meeting"] {
   display: none !important;
-}
-
-/* Campos editáveis da frota ficam apenas de leitura quando bloqueado */
-body:not(.admin-mode) [data-fleet-company],
-body:not(.admin-mode) [data-fleet-driver],
-body:not(.admin-mode) [data-fleet-description],
-body:not(.admin-mode) [data-fleet-date] {
-  pointer-events: none;
-  background: #f9fafb;
-  color: var(--muted);
 }
 
 /* Cabeçalho de mês colapsável (reuniões, vistorias, ausências) */

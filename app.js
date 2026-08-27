@@ -132,6 +132,70 @@ options.situations = ["Aguarda peças", "Aguarda entrada na oficina", "Em oficin
 
 const main = document.querySelector("#main");
 const toast = document.querySelector("#toast");
+
+// ── Modo Administrador (palavra-passe local) ─────────────────
+// Gate do lado do cliente: esconde/bloqueia editar, eliminar e concluir
+// para quem não introduzir a palavra-passe. Não é à prova de um utilizador
+// técnico, mas evita alterações acidentais e casuais aos dados partilhados.
+const ADMIN_STORAGE_KEY = "avarias-admin-unlocked";
+let isAdmin = false;
+try { isAdmin = sessionStorage.getItem(ADMIN_STORAGE_KEY) === "1"; } catch (e) { /* storage indisponível */ }
+
+const ADMIN_ACTIONS = new Set([
+  "delete-fleet", "delete-ausencia", "delete-vistoria", "edit-vistoria",
+  "meeting-event-edit", "meeting-event-delete", "dock-item-edit", "dock-item-delete",
+  "close-breakdown", "close-meeting", "fleet-date-na", "fleet-date-reset"
+]);
+const ADMIN_FORMS = new Set(["quick-update", "dock-edit"]);
+
+async function sha256Hex(text) {
+  const data = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function toggleAdminMode() {
+  if (isAdmin) {
+    isAdmin = false;
+    try { sessionStorage.removeItem(ADMIN_STORAGE_KEY); } catch (e) {}
+    showToast("Modo Administrador desligado.");
+    render();
+    return;
+  }
+  const expected = String(remoteConfig.adminPasswordHash || "").toLowerCase();
+  if (!expected) {
+    showToast("Palavra-passe de administrador não configurada.");
+    return;
+  }
+  const entry = window.prompt("Palavra-passe de administrador:");
+  if (entry == null) return;
+  const hash = await sha256Hex(entry);
+  if (hash === expected) {
+    isAdmin = true;
+    try { sessionStorage.setItem(ADMIN_STORAGE_KEY, "1"); } catch (e) {}
+    showToast("Modo Administrador ativado.");
+    render();
+  } else {
+    showToast("Palavra-passe incorreta.");
+  }
+}
+
+function requireAdmin() {
+  if (isAdmin) return true;
+  showToast("Ação reservada ao Administrador. Ative o modo Administrador.");
+  return false;
+}
+
+function syncAdminUi() {
+  document.body.classList.toggle("admin-mode", isAdmin);
+  const adminBtn = document.querySelector("#admin-toggle");
+  if (adminBtn) {
+    adminBtn.classList.toggle("is-admin", isAdmin);
+    adminBtn.title = isAdmin ? "Desligar modo Administrador" : "Ativar modo Administrador";
+    const label = adminBtn.querySelector(".admin-label");
+    if (label) label.textContent = isAdmin ? "Admin ✓" : "Admin";
+  }
+}
 let remoteClient = null;
 let remoteChannel = null;
 let remoteStatus = {
@@ -151,7 +215,8 @@ const icons = {
   x: '<svg viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>',
   sort: '<svg viewBox="0 0 24 24"><path d="m3 8 4-4 4 4"></path><path d="M7 4v16"></path><path d="m21 16-4 4-4-4"></path><path d="M17 20V4"></path></svg>',
-  pencil: '<svg viewBox="0 0 24 24"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>'
+  pencil: '<svg viewBox="0 0 24 24"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>',
+  lock: '<svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>'
 };
 
 let state = loadState();
@@ -181,6 +246,8 @@ document.addEventListener("click", async (event) => {
   }
 
   const action = button.dataset.action;
+  if (action === "toggle-admin") { await toggleAdminMode(); return; }
+  if (ADMIN_ACTIONS.has(action) && !requireAdmin()) return;
   if (action === "export-data") exportActivePanelExcel();
   if (action === "sync-trello" && typeof syncAllBreakdownsToTrello === "function") {
     await syncAllBreakdownsToTrello();
@@ -345,6 +412,9 @@ document.addEventListener("change", async (event) => {
   if (target.dataset.filterMulti) {
     toggleMultiFilter(target.dataset.filterMulti, target.value);
   }
+  if (target.dataset.fleetDate || target.dataset.fleetCompany || target.dataset.fleetDriver || target.dataset.fleetDescription) {
+    if (!requireAdmin()) { render(); return; }
+  }
   if (target.dataset.fleetDate) {
     await updateFleetDate(target.dataset.equipment, target.dataset.fleetDate, target.value);
   }
@@ -402,6 +472,10 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("submit", async (event) => {
   const form = event.target;
+  if (ADMIN_FORMS.has(form.dataset.form) && !requireAdmin()) {
+    event.preventDefault();
+    return;
+  }
   if (form.dataset.form === "quick-update") {
     event.preventDefault();
     await handleQuickUpdate(form, event.submitter?.dataset.intent || "update");
@@ -1921,6 +1995,7 @@ function render(focusSelector = "") {
   }
   main.innerHTML = html;
   hydrateIcons();
+  syncAdminUi();
   try { updateMeetingDock(); } catch (e) { console.error("dock:", e); }
 
   if (focusSelector) {

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Gestão de Avarias</title>
-    <link rel="stylesheet" href="styles.css?v=35">
+    <link rel="stylesheet" href="styles.css?v=36">
   </head>
   <body>
     <div class="app-shell">
@@ -21,6 +21,10 @@
           <span id="sync-line"></span>
         </div>
         <div class="top-actions">
+          <button class="ghost-button admin-toggle" type="button" data-action="toggle-admin" id="admin-toggle" title="Ativar modo Administrador">
+            <span data-icon="lock"></span>
+            <span class="admin-label">Admin</span>
+          </button>
           <button class="ghost-button" type="button" data-action="sync-trello" id="trello-sync-button" hidden title="Sincronizar avarias abertas com o Trello">
             <span data-icon="rotate"></span>
             <span>Trello</span>
@@ -49,11 +53,11 @@
     <div id="toast" role="status" aria-live="polite"></div>
     <div id="meeting-dock"></div>
 
-    <script src="config.js?v=35"></script>
+    <script src="config.js?v=36"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="seed-data.js?v=35"></script>
-    <script src="trello.js?v=35"></script>
-    <script src="app.js?v=35"></script>
+    <script src="seed-data.js?v=36"></script>
+    <script src="trello.js?v=36"></script>
+    <script src="app.js?v=36"></script>
   </body>
 </html>

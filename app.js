@@ -108,18 +108,18 @@ function applyDriverImport() {
 // Secções sem `types` aplicam-se a todos os equipamentos; com `types` só aos tipos indicados.
 // (Definidas aqui no topo porque render() é chamado no arranque e pode renderizar a Vistoria.)
 const VISTORIA_SECTIONS = [
-  { name: "1. Verificação Geral", items: ["Estado geral de limpeza", "Danos visíveis na estrutura/chassis", "Corrosão ou fissuras", "Matrículas legíveis e fixas", "Guarda-lamas e proteções"] },
-  { name: "2. Pneus e Rodas", items: ["Desgaste irregular", "Danos/cortes/bolhas", "Pressão aparente", "Estado das jantes"] },
-  { name: "3. Sinalização", items: ["Refletores e sinalização"] },
+  { name: "1. Limpeza e Conservação", items: ["Estado geral de limpeza", "Danos visíveis na estrutura/chassis", "Corrosão ou fissuras", "Matrículas legíveis e fixas", "Guarda-lamas e proteções"] },
+  { name: "2. Pneus e Rodas", items: ["Desgaste irregular", "Danos, cortes ou bolhas", "Pressão aparente", "Estado das jantes"] },
+  { name: "3. Sinalização", items: ["Refletores", "Sinalização", "Plata TP Alvará"] },
   { name: "4. Fugas e Componentes", items: ["Tubagens e mangueiras", "Cablagens visíveis"] },
-  { name: "5. Segurança e Cabina", types: ["Trator/Camião"], items: ["Para-brisas e espelhos", "Escovas limpa-vidros", "Buzina", "Cinto de segurança", "Extintor válido", "Colete refletor / triângulo"] },
-  { name: "6. Trator", types: ["Trator/Camião"], items: ["Estado da roda suplente", "Sistema de bloqueio", "Degraus e pega-mãos"] },
-  { name: "7. Semi-reboque Basculante", types: ["Semi-reboque Basculante"], items: ["Estado da caixa", "Fissuras estruturais", "Fechos porta traseira", "Lona/cobertura", "Articulações e pivôs"] },
+  { name: "5. Segurança e Cabina", types: ["Trator", "Camião"], items: ["Para-brisas e espelhos", "Cinto de segurança", "Colete refletor"] },
+  { name: "6. Trator", types: ["Trator", "Camião"], items: ["Estado da roda suplente", "Degraus e pega-mãos"] },
+  { name: "7. Semi-reboque Basculante", types: ["Semi-reboque Basculante"], items: ["Estado da caixa", "Fissuras estruturais", "Fechos da porta traseira", "Lona / cobertura"] },
   { name: "8. Porta-Máquinas", types: ["Porta-Máquinas"], items: ["Estrutura geral", "Estado das rampas", "Pontos de amarração", "Piso antiderrapante", "Estado do piso"] },
-  { name: "9. Estrados", types: ["Estrados"], items: ["Estado do piso", "Estrutura geral", "Pontos de amarração", "Laterais/rebordos", "Estado do chassis"] }
+  { name: "9. Estrados", types: ["Estrados"], items: ["Estado do piso", "Estrutura geral", "Pontos de amarração", "Laterais / rebordos", "Estado do chassis"] }
 ];
 
-const VISTORIA_TYPES = ["Trator/Camião", "Semi-reboque Basculante", "Porta-Máquinas", "Estrados", "Semi-reboque Caixa", "Cisterna", "Outro"];
+const VISTORIA_TYPES = ["Trator", "Camião", "Semi-reboque Basculante", "Porta-Máquinas", "Estrados"];
 const VISTORIA_STATES = ["OK", "SOB OBS", "CRÍTICO", "N/A"];
 const seed = window.AVARIAS_SEED || {};
 const remoteConfig = window.AVARIAS_REMOTE_CONFIG || {};
@@ -1033,10 +1033,9 @@ function inferVistoriaType(description) {
   if (d.includes("porta") && d.includes("maquina")) return "Porta-Máquinas";
   if (d.includes("basculante")) return "Semi-reboque Basculante";
   if (d.includes("estrado")) return "Estrados";
-  if (d.includes("cisterna")) return "Cisterna";
-  if (d.includes("caixa") || d.includes("reboque")) return "Semi-reboque Caixa";
-  if (d.includes("camiao")) return "Trator/Camião";
-  return "Outro";
+  if (d.includes("trator") || d.includes("tractor")) return "Trator";
+  if (d.includes("camiao")) return "Camião";
+  return "";
 }
 
 function fillVistoriaFromPlate(value) {
@@ -1046,8 +1045,10 @@ function fillVistoriaFromPlate(value) {
   if (equipment) equipment.value = match?.equipment ?? "";
   if (match && typeSelect) {
     const inferred = inferVistoriaType(match.description);
-    typeSelect.value = inferred;
-    applyVistoriaTypeVisibility(inferred);
+    if (inferred) {
+      typeSelect.value = inferred;
+      applyVistoriaTypeVisibility(inferred);
+    }
   }
 }
 

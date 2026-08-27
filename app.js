@@ -2605,6 +2605,33 @@ function getBreakdownCompany(breakdown) {
   return fleetItem?.fleetCompany || "";
 }
 
+function breakdownListRow(item) {
+  return `<tr>
+    <td><strong>${escapeHtml(item.equipment || "-")}</strong></td>
+    <td>${escapeHtml(item.plate || "-")}</td>
+    <td>${escapeHtml(getBreakdownCompany(item) || "-")}</td>
+    <td>${escapeHtml(item.type || "-")}</td>
+    <td>${statusBadge(item.status)}</td>
+    <td>${escapeHtml(item.situation || "-")}</td>
+    <td>${renderAttachmentSummary(item)}</td>
+    <td>Avaria: ${formatDate(item.reportedAt)}<br>Prev.: ${formatDate(item.expectedExitAt)}</td>
+    <td>${escapeHtml(item.workshop || item.workshopType || "-")}</td>
+    <td class="compact-cell">${escapeHtml(item.lastNote || item.description || "-")}</td>
+    <td>
+      <div class="button-row">
+        <button class="icon-button" type="button" data-action="select-breakdown" data-id="${escapeAttr(item.id)}" title="Abrir">
+          <span data-icon="eye"></span>
+        </button>
+        ${item.status !== "Concluido" ? `
+          <button class="icon-button" type="button" data-action="close-breakdown" data-id="${escapeAttr(item.id)}" title="Concluir">
+            <span data-icon="check"></span>
+          </button>
+        ` : ""}
+      </div>
+    </td>
+  </tr>`;
+}
+
 function renderBreakdowns() {
   const list = sortBreakdownsByDate(getFilteredBreakdowns(false), state.breakdownsSort);
   return `
@@ -2636,32 +2663,7 @@ function renderBreakdowns() {
               </tr>
             </thead>
             <tbody>
-              ${list.map((item) => `
-                <tr>
-                  <td><strong>${escapeHtml(item.equipment || "-")}</strong></td>
-                  <td>${escapeHtml(item.plate || "-")}</td>
-                  <td>${escapeHtml(getBreakdownCompany(item) || "-")}</td>
-                  <td>${escapeHtml(item.type || "-")}</td>
-                  <td>${statusBadge(item.status)}</td>
-                  <td>${escapeHtml(item.situation || "-")}</td>
-                  <td>${renderAttachmentSummary(item)}</td>
-                  <td>Avaria: ${formatDate(item.reportedAt)}<br>Prev.: ${formatDate(item.expectedExitAt)}</td>
-                  <td>${escapeHtml(item.workshop || item.workshopType || "-")}</td>
-                  <td class="compact-cell">${escapeHtml(item.lastNote || item.description || "-")}</td>
-                  <td>
-                    <div class="button-row">
-                      <button class="icon-button" type="button" data-action="select-breakdown" data-id="${escapeAttr(item.id)}" title="Abrir">
-                        <span data-icon="eye"></span>
-                      </button>
-                      ${item.status !== "Concluido" ? `
-                        <button class="icon-button" type="button" data-action="close-breakdown" data-id="${escapeAttr(item.id)}" title="Concluir">
-                          <span data-icon="check"></span>
-                        </button>
-                      ` : ""}
-                    </div>
-                  </td>
-                </tr>
-              `).join("")}
+              ${renderMonthGroups("breakdowns", list, (item) => item.reportedAt, 11, breakdownListRow, "avaria", "avarias", "Sem avarias para estes filtros.")}
             </tbody>
           </table>
         </div>

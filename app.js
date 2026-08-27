@@ -388,12 +388,15 @@ document.addEventListener("click", (event) => {
   }
   const summary = event.target.closest("summary[data-filter-summary]");
   if (summary) {
-    const details = summary.parentElement;
-    openFilterMenu = details.open ? null : summary.dataset.filterSummary;
+    event.preventDefault();
+    const name = summary.dataset.filterSummary;
+    openFilterMenu = openFilterMenu === name ? null : name;
+    render();
     return;
   }
-  if (!event.target.closest(".filter-menu")) {
+  if (!event.target.closest(".filter-menu") && openFilterMenu !== null) {
     openFilterMenu = null;
+    render();
   }
 });
 

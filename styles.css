@@ -327,17 +327,43 @@ body:not(.admin-mode) [data-fleet-date] {
   color: var(--muted);
 }
 
-/* Cabeçalho de mês na lista de reuniões */
+/* Cabeçalho de mês colapsável (reuniões, vistorias, ausências) */
 .month-row td {
   background: var(--surface-soft);
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+
+.month-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
   font-weight: 600;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
-  padding: 8px 12px;
-  border-top: 1px solid var(--line);
+  text-align: left;
 }
+
+.month-toggle:hover { background: rgba(15,23,42,0.04); color: var(--ink); }
+
+.month-chevron {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 120ms;
+}
+
+.month-toggle.open .month-chevron { transform: rotate(90deg); }
 
 .row-actions {
   display: flex;

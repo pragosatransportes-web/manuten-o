@@ -247,6 +247,7 @@ document.addEventListener("click", async (event) => {
   }
 
   const action = button.dataset.action;
+  if (action === "month-toggle") { toggleMonth(button.dataset.key); return; }
   if (action === "toggle-admin") { await toggleAdminMode(); return; }
   if (ADMIN_ACTIONS.has(action) && !requireAdmin()) return;
   if (action === "export-data") exportActivePanelExcel();
@@ -561,6 +562,7 @@ function makeInitialState() {
     meetingDockCollapsed: false,
     dockNoteType: "note",
     dockEditId: "",
+    expandedMonths: [],
     meetings: [],
     dashboardDateTab: "inspectionAt",
     sourceGeneratedAt: seed.generatedAt || "",
@@ -1086,6 +1088,24 @@ function renderVistoriaTypeFilter() {
     </div>`;
 }
 
+function vistoriaListRow(v) {
+  const s = scoreVistoria(v.items);
+  return `<tr>
+    <td>${formatDate(v.date)}${v.time ? ` ${escapeHtml(v.time)}` : ""}</td>
+    <td><strong>${escapeHtml(String(v.equipment || "-"))}</strong></td>
+    <td>${escapeHtml(v.plate || "-")}</td>
+    <td>${escapeHtml(v.company || "-")}</td>
+    <td>${escapeHtml(v.equipmentType || "-")}</td>
+    <td>${escapeHtml(v.inspector || "-")}</td>
+    <td>${vistoriaResultBadge(v.result)}</td>
+    <td>${s.obs + s.crit > 0 ? `${s.obs} obs · ${s.crit} crít.` : "—"}</td>
+    <td><div class="button-row">
+      <button class="icon-button" type="button" data-action="select-vistoria" data-id="${escapeAttr(v.id)}" title="Ver"><span data-icon="eye"></span></button>
+      <button class="icon-button" type="button" data-action="delete-vistoria" data-id="${escapeAttr(v.id)}" title="Eliminar"><span data-icon="trash"></span></button>
+    </div></td>
+  </tr>`;
+}
+
 function renderVistoriaList() {
   const list = getFilteredVistorias();
   return `
@@ -1099,23 +1119,7 @@ function renderVistoriaList() {
         <table>
           <thead><tr><th>Data</th><th>Equip.</th><th>Matrícula</th><th>Empresa</th><th>Tipo</th><th>Inspetor</th><th>Resultado</th><th>Anomalias</th><th></th></tr></thead>
           <tbody>
-            ${list.length ? list.map((v) => {
-              const s = scoreVistoria(v.items);
-              return `<tr>
-                <td>${formatDate(v.date)}${v.time ? ` ${escapeHtml(v.time)}` : ""}</td>
-                <td><strong>${escapeHtml(String(v.equipment || "-"))}</strong></td>
-                <td>${escapeHtml(v.plate || "-")}</td>
-                <td>${escapeHtml(v.company || "-")}</td>
-                <td>${escapeHtml(v.equipmentType || "-")}</td>
-                <td>${escapeHtml(v.inspector || "-")}</td>
-                <td>${vistoriaResultBadge(v.result)}</td>
-                <td>${s.obs + s.crit > 0 ? `${s.obs} obs · ${s.crit} crít.` : "—"}</td>
-                <td><div class="button-row">
-                  <button class="icon-button" type="button" data-action="select-vistoria" data-id="${escapeAttr(v.id)}" title="Ver"><span data-icon="eye"></span></button>
-                  <button class="icon-button" type="button" data-action="delete-vistoria" data-id="${escapeAttr(v.id)}" title="Eliminar"><span data-icon="trash"></span></button>
-                </div></td>
-              </tr>`;
-            }).join("") : `<tr><td colspan="9"><p class="empty-state">Sem vistorias para estes filtros.</p></td></tr>`}
+            ${renderMonthGroups("vistorias", list, (v) => v.date, 9, vistoriaListRow, "vistoria", "vistorias", "Sem vistorias para estes filtros.")}
           </tbody>
         </table>
       </div>
@@ -2231,39 +2235,63 @@ function monthLabelPt(iso) {
   return `${MONTH_NAMES_PT[idx] || "Sem data"} ${y || ""}`.trim();
 }
 
+function isMonthExpanded(key) {
+  return (state.expandedMonths || []).includes(key);
+}
+
+function toggleMonth(key) {
+  const set = new Set(state.expandedMonths || []);
+  if (set.has(key)) set.delete(key); else set.add(key);
+  state.expandedMonths = [...set];
+  saveState();
+  render();
+}
+
+// Renderiza linhas de tabela agrupadas por mês, com cada mês colapsável.
+// `items` já vem ordenado (a ordem determina a ordenação dentro do mês);
+// os meses são apresentados do mais recente para o mais antigo.
+function renderMonthGroups(listId, items, getDate, colspan, rowRenderer, nounSingular, nounPlural, emptyText) {
+  if (!items.length) {
+    return `<tr><td colspan="${colspan}"><p class="empty-state">${escapeHtml(emptyText || "Sem registos.")}</p></td></tr>`;
+  }
+  const keys = [...new Set(items.map((it) => String(getDate(it) || "").slice(0, 7)))].sort((a, b) => b.localeCompare(a));
+  return keys.map((key) => {
+    const groupItems = items.filter((it) => String(getDate(it) || "").slice(0, 7) === key);
+    const fullKey = `${listId}:${key}`;
+    const expanded = isMonthExpanded(fullKey);
+    const n = groupItems.length;
+    const noun = n === 1 ? (nounSingular || "registo") : (nounPlural || "registos");
+    const header = `<tr class="month-row"><td colspan="${colspan}">
+      <button type="button" class="month-toggle${expanded ? " open" : ""}" data-action="month-toggle" data-key="${escapeAttr(fullKey)}" aria-expanded="${expanded}">
+        <span class="month-chevron" aria-hidden="true"></span>
+        <span>${escapeHtml(monthLabelPt(key + "-01"))} · ${n} ${noun}</span>
+      </button></td></tr>`;
+    const body = expanded ? groupItems.map(rowRenderer).join("") : "";
+    return header + body;
+  }).join("");
+}
+
+function meetingConsultRow(m) {
+  const ended = !!m.endedAt;
+  const counts = meetingCounts(m);
+  return `<tr>
+    <td><strong>${formatDate((m.startedAt || "").slice(0, 10))}</strong></td>
+    <td>${escapeHtml(formatTimeOnly(m.startedAt))}</td>
+    <td>${ended ? `${m.durationMin} min` : "—"}</td>
+    <td>${ended ? '<span class="badge concluido">Encerrada</span>' : '<span class="badge circula">A decorrer</span>'}</td>
+    <td>${counts.novas} novas · ${counts.updates} atualizações · ${counts.tarefas} tarefas</td>
+    <td>${escapeHtml(m.operator || "-")}</td>
+    <td class="row-actions">
+      <button class="icon-button" type="button" data-action="select-meeting" data-id="${escapeAttr(m.id)}" title="Ver relatório"><span data-icon="eye"></span></button>
+      ${!ended ? `<button class="icon-button" type="button" data-action="close-meeting-row" data-id="${escapeAttr(m.id)}" title="Encerrar reunião (Administrador)"><span data-icon="check"></span></button>` : ""}
+      <button class="icon-button danger" type="button" data-action="delete-meeting" data-id="${escapeAttr(m.id)}" title="Eliminar reunião (Administrador)"><span data-icon="trash"></span></button>
+    </td>
+  </tr>`;
+}
+
 function renderMeetingConsult() {
   const past = [...state.meetings].sort((a, b) => (b.startedAt || "").localeCompare(a.startedAt || ""));
-
-  let rows;
-  if (!past.length) {
-    rows = `<tr><td colspan="7"><p class="empty-state">Ainda não há reuniões registadas.</p></td></tr>`;
-  } else {
-    let currentMonth = "";
-    rows = past.map((m) => {
-      const ended = !!m.endedAt;
-      const counts = meetingCounts(m);
-      const monthKey = String(m.startedAt || "").slice(0, 7);
-      let header = "";
-      if (monthKey !== currentMonth) {
-        currentMonth = monthKey;
-        const monthCount = past.filter((x) => String(x.startedAt || "").slice(0, 7) === monthKey).length;
-        header = `<tr class="month-row"><td colspan="7">${escapeHtml(monthLabelPt(m.startedAt))} · ${monthCount} ${monthCount === 1 ? "reunião" : "reuniões"}</td></tr>`;
-      }
-      return `${header}<tr>
-        <td><strong>${formatDate((m.startedAt || "").slice(0, 10))}</strong></td>
-        <td>${escapeHtml(formatTimeOnly(m.startedAt))}</td>
-        <td>${ended ? `${m.durationMin} min` : "—"}</td>
-        <td>${ended ? '<span class="badge concluido">Encerrada</span>' : '<span class="badge circula">A decorrer</span>'}</td>
-        <td>${counts.novas} novas · ${counts.updates} atualizações · ${counts.tarefas} tarefas</td>
-        <td>${escapeHtml(m.operator || "-")}</td>
-        <td class="row-actions">
-          <button class="icon-button" type="button" data-action="select-meeting" data-id="${escapeAttr(m.id)}" title="Ver relatório"><span data-icon="eye"></span></button>
-          ${!ended ? `<button class="icon-button" type="button" data-action="close-meeting-row" data-id="${escapeAttr(m.id)}" title="Encerrar reunião (Administrador)"><span data-icon="check"></span></button>` : ""}
-          <button class="icon-button danger" type="button" data-action="delete-meeting" data-id="${escapeAttr(m.id)}" title="Eliminar reunião (Administrador)"><span data-icon="trash"></span></button>
-        </td>
-      </tr>`;
-    }).join("");
-  }
+  const rows = renderMonthGroups("meetings", past, (m) => m.startedAt, 7, meetingConsultRow, "reunião", "reuniões", "Ainda não há reuniões registadas.");
 
   return `
     <section class="panel">
@@ -3657,6 +3685,19 @@ function ausenciaSearchNorm(s) {
   return normalizeText(s).replace(/[^a-z0-9]/g, "");
 }
 
+function ausenciaListRow(a) {
+  return `<tr>
+    <td><strong>${escapeHtml(a.driver)}</strong></td>
+    <td>${escapeHtml(ausenciaVehicleText(a) || "-")}</td>
+    <td><span class="cal-abs cal-abs--${absenceClass(a.type)}">${escapeHtml(a.type)}</span></td>
+    <td>${formatDate(a.startAt)}</td>
+    <td>${formatDate(a.endAt)}</td>
+    <td>${absenceDays(a)}</td>
+    <td class="compact-cell">${escapeHtml(a.notes || "-")}</td>
+    <td><button class="icon-button" type="button" data-action="delete-ausencia" data-id="${escapeAttr(a.id)}" title="Eliminar ausência"><span data-icon="trash"></span></button></td>
+  </tr>`;
+}
+
 function renderAusenciaList(list) {
   if (!list.length) return `<div class="panel-sub"><p class="muted">Ainda não há ausências registadas.</p></div>`;
   const sortKey = state.filters.ausenciaSort || "date";
@@ -3680,22 +3721,11 @@ function renderAusenciaList(list) {
           </label>
         </div>
       </div>
-      ${sorted.length ? "" : '<p class="muted" style="padding:6px 2px">Sem resultados para esta pesquisa.</p>'}
       <div class="table-wrap">
         <table>
           <thead><tr><th>Motorista</th><th>Viatura</th><th>Tipo</th><th>Início</th><th>Fim</th><th>Dias</th><th>Notas</th><th></th></tr></thead>
           <tbody>
-            ${sorted.map((a) => `
-              <tr>
-                <td><strong>${escapeHtml(a.driver)}</strong></td>
-                <td>${escapeHtml(ausenciaVehicleText(a) || "-")}</td>
-                <td><span class="cal-abs cal-abs--${absenceClass(a.type)}">${escapeHtml(a.type)}</span></td>
-                <td>${formatDate(a.startAt)}</td>
-                <td>${formatDate(a.endAt)}</td>
-                <td>${absenceDays(a)}</td>
-                <td class="compact-cell">${escapeHtml(a.notes || "-")}</td>
-                <td><button class="icon-button" type="button" data-action="delete-ausencia" data-id="${escapeAttr(a.id)}" title="Eliminar ausência"><span data-icon="trash"></span></button></td>
-              </tr>`).join("")}
+            ${renderMonthGroups("ausencias", sorted, (a) => a.startAt, 8, ausenciaListRow, "ausência", "ausências", "Sem resultados para esta pesquisa.")}
           </tbody>
         </table>
       </div>

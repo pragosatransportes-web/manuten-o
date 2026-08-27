@@ -144,7 +144,8 @@ try { isAdmin = sessionStorage.getItem(ADMIN_STORAGE_KEY) === "1"; } catch (e) {
 const ADMIN_ACTIONS = new Set([
   "delete-fleet", "delete-ausencia", "delete-vistoria", "edit-vistoria",
   "meeting-event-edit", "meeting-event-delete", "dock-item-edit", "dock-item-delete",
-  "close-breakdown", "close-meeting", "fleet-date-na", "fleet-date-reset"
+  "close-breakdown", "close-meeting", "close-meeting-row", "delete-meeting",
+  "fleet-date-na", "fleet-date-reset"
 ]);
 const ADMIN_FORMS = new Set(["quick-update", "dock-edit"]);
 
@@ -329,6 +330,12 @@ document.addEventListener("click", async (event) => {
     state.currentView = "meeting";
     saveState();
     render();
+  }
+  if (action === "delete-meeting") {
+    await deleteMeeting(button.dataset.id);
+  }
+  if (action === "close-meeting-row") {
+    await closeMeetingById(button.dataset.id);
   }
   if (action === "export-meeting") {
     exportMeetingReportExcel(button.dataset.id);
@@ -1751,6 +1758,40 @@ async function persistMeetingRemote(meeting) {
   if (error) throw error;
 }
 
+async function deleteMeetingRemote(id) {
+  if (!remoteStatus.ready || !remoteClient) return;
+  const { error } = await remoteClient.from("avarias_reunioes").delete().eq("id", String(id));
+  if (error) throw error;
+}
+
+async function deleteMeeting(id) {
+  const m = findMeetingById(id);
+  if (!m) return;
+  if (!window.confirm(`Eliminar a reunião de ${formatDate((m.startedAt || "").slice(0, 10))}? Esta ação não pode ser anulada.`)) return;
+  state.meetings = state.meetings.filter((x) => x !== m);
+  if (state.activeMeetingId === m.id) state.activeMeetingId = "";
+  if (state.selectedMeetingId === m.id) { state.selectedMeetingId = ""; state.meetingView = "consult"; }
+  saveState();
+  showToast("Reunião eliminada.");
+  render();
+  await persistRemoteSafely(() => deleteMeetingRemote(id));
+}
+
+async function closeMeetingById(id) {
+  const m = findMeetingById(id);
+  if (!m || m.endedAt) return;
+  if (!window.confirm("Encerrar esta reunião? Vai ser gerado o relatório com o resumo das atualizações.")) return;
+  m.endedAt = new Date().toISOString();
+  m.durationMin = Math.max(1, Math.round((new Date(m.endedAt) - new Date(m.startedAt)) / 60000));
+  if (state.activeMeetingId === m.id) state.activeMeetingId = "";
+  state.selectedMeetingId = m.id;
+  state.meetingView = "report";
+  saveState();
+  showToast(`Reunião encerrada (${m.durationMin} min).`);
+  render();
+  await persistRemoteSafely(() => persistMeetingRemote(m));
+}
+
 function generateMeetingId() {
   const stamp = new Date().toISOString().replace(/\D/g, "").slice(2, 14);
   return `RU${stamp}${Math.floor(Math.random() * 90 + 10)}`;
@@ -2182,8 +2223,48 @@ function renderMeetingWork(active) {
   `;
 }
 
+const MONTH_NAMES_PT = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+
+function monthLabelPt(iso) {
+  const [y, m] = String(iso || "").slice(0, 10).split("-");
+  const idx = parseInt(m, 10) - 1;
+  return `${MONTH_NAMES_PT[idx] || "Sem data"} ${y || ""}`.trim();
+}
+
 function renderMeetingConsult() {
   const past = [...state.meetings].sort((a, b) => (b.startedAt || "").localeCompare(a.startedAt || ""));
+
+  let rows;
+  if (!past.length) {
+    rows = `<tr><td colspan="7"><p class="empty-state">Ainda não há reuniões registadas.</p></td></tr>`;
+  } else {
+    let currentMonth = "";
+    rows = past.map((m) => {
+      const ended = !!m.endedAt;
+      const counts = meetingCounts(m);
+      const monthKey = String(m.startedAt || "").slice(0, 7);
+      let header = "";
+      if (monthKey !== currentMonth) {
+        currentMonth = monthKey;
+        const monthCount = past.filter((x) => String(x.startedAt || "").slice(0, 7) === monthKey).length;
+        header = `<tr class="month-row"><td colspan="7">${escapeHtml(monthLabelPt(m.startedAt))} · ${monthCount} ${monthCount === 1 ? "reunião" : "reuniões"}</td></tr>`;
+      }
+      return `${header}<tr>
+        <td><strong>${formatDate((m.startedAt || "").slice(0, 10))}</strong></td>
+        <td>${escapeHtml(formatTimeOnly(m.startedAt))}</td>
+        <td>${ended ? `${m.durationMin} min` : "—"}</td>
+        <td>${ended ? '<span class="badge concluido">Encerrada</span>' : '<span class="badge circula">A decorrer</span>'}</td>
+        <td>${counts.novas} novas · ${counts.updates} atualizações · ${counts.tarefas} tarefas</td>
+        <td>${escapeHtml(m.operator || "-")}</td>
+        <td class="row-actions">
+          <button class="icon-button" type="button" data-action="select-meeting" data-id="${escapeAttr(m.id)}" title="Ver relatório"><span data-icon="eye"></span></button>
+          ${!ended ? `<button class="icon-button" type="button" data-action="close-meeting-row" data-id="${escapeAttr(m.id)}" title="Encerrar reunião (Administrador)"><span data-icon="check"></span></button>` : ""}
+          <button class="icon-button danger" type="button" data-action="delete-meeting" data-id="${escapeAttr(m.id)}" title="Eliminar reunião (Administrador)"><span data-icon="trash"></span></button>
+        </td>
+      </tr>`;
+    }).join("");
+  }
+
   return `
     <section class="panel">
       <div class="panel-header">
@@ -2194,19 +2275,7 @@ function renderMeetingConsult() {
         <table>
           <thead><tr><th>Data</th><th>Início</th><th>Duração</th><th>Estado</th><th>Ações</th><th>Operador</th><th></th></tr></thead>
           <tbody>
-            ${past.length ? past.map((m) => {
-              const ended = !!m.endedAt;
-              const counts = meetingCounts(m);
-              return `<tr>
-                <td><strong>${formatDate((m.startedAt || "").slice(0, 10))}</strong></td>
-                <td>${escapeHtml(formatTimeOnly(m.startedAt))}</td>
-                <td>${ended ? `${m.durationMin} min` : "—"}</td>
-                <td>${ended ? '<span class="badge concluido">Encerrada</span>' : '<span class="badge circula">A decorrer</span>'}</td>
-                <td>${counts.novas} novas · ${counts.updates} atualizações · ${counts.tarefas} tarefas</td>
-                <td>${escapeHtml(m.operator || "-")}</td>
-                <td><button class="icon-button" type="button" data-action="select-meeting" data-id="${escapeAttr(m.id)}" title="Ver relatório"><span data-icon="eye"></span></button></td>
-              </tr>`;
-            }).join("") : `<tr><td colspan="7"><p class="empty-state">Ainda não há reuniões registadas.</p></td></tr>`}
+            ${rows}
           </tbody>
         </table>
       </div>

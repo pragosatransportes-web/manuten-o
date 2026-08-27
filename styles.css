@@ -308,6 +308,8 @@ body:not(.admin-mode) [data-action="dock-item-edit"],
 body:not(.admin-mode) [data-action="dock-item-delete"],
 body:not(.admin-mode) [data-action="close-breakdown"],
 body:not(.admin-mode) [data-action="close-meeting"],
+body:not(.admin-mode) [data-action="close-meeting-row"],
+body:not(.admin-mode) [data-action="delete-meeting"],
 body:not(.admin-mode) [data-action="fleet-date-na"],
 body:not(.admin-mode) [data-action="fleet-date-reset"],
 body:not(.admin-mode) form[data-form="quick-update"],
@@ -324,6 +326,26 @@ body:not(.admin-mode) [data-fleet-date] {
   background: #f9fafb;
   color: var(--muted);
 }
+
+/* Cabeçalho de mês na lista de reuniões */
+.month-row td {
+  background: var(--surface-soft);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.row-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.icon-button.danger { color: var(--danger, #dc2626); }
 
 /* ── Filtros multi-seleção (checkbox) ───────────── */
 .filter-menu {

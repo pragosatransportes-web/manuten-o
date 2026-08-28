@@ -2062,63 +2062,119 @@ const DASHBOARD_DATE_TABS = [
 ];
 
 function renderDashboard() {
-  const management = getManagementMetrics();
-  const alerts = getFleetDateAlerts();
-  const activeTab = DASHBOARD_DATE_TABS.some(([f]) => f === state.dashboardDateTab) ? state.dashboardDateTab : "inspectionAt";
-  const filtered = alerts.filter((a) => a.field === activeTab);
+  const st = getDashboardState();
+  const alerts = getImmediateAlerts();
+  const ws = getWorkshopBreakdown();
+  const next30 = getFleetDateAlerts().filter((a) => Number.isFinite(a.days) && a.days >= 0 && a.days <= 30);
 
-  const tabs = DASHBOARD_DATE_TABS.map(([field, label]) => {
-    const count = alerts.filter((a) => a.field === field).length;
-    return `<button type="button" class="${activeTab === field ? "active" : ""}" data-action="dashboard-date-tab" data-field="${escapeAttr(field)}">${escapeHtml(label)}${count ? ` (${count})` : ""}</button>`;
-  }).join("");
+  const stateCard = (label, value, detail, opts = {}) => {
+    const cls = opts.tone ? ` dash-stat--${opts.tone}` : "";
+    const body = `<span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong><em>${escapeHtml(detail)}</em>`;
+    if (opts.view) {
+      return `<button type="button" class="dash-stat dash-stat--btn${cls}" data-view="${escapeAttr(opts.view)}" title="Abrir ${escapeAttr(label)}">${body}</button>`;
+    }
+    if (opts.filter) {
+      const attrs = Object.entries(opts.filter).map(([k, v]) => `data-${k}="${escapeAttr(v)}"`).join(" ");
+      return `<button type="button" class="dash-stat dash-stat--btn${cls}" data-action="dashboard-filter" ${attrs} title="Ver ${escapeAttr(label)}">${body}</button>`;
+    }
+    return `<article class="dash-stat${cls}">${body}</article>`;
+  };
+
+  const alertsHtml = alerts.length
+    ? alerts.map((a) => {
+        const inner = `<span class="dash-alert__dot">🔴</span><span class="dash-alert__txt"><strong>${escapeHtml(String(a.count))}</strong> ${escapeHtml(a.label)}</span>`;
+        if (a.view) return `<button type="button" class="dash-alert" data-view="${escapeAttr(a.view)}">${inner}<span class="dash-alert__cta">Ver →</span></button>`;
+        if (a.filter) {
+          const attrs = Object.entries(a.filter).map(([k, v]) => `data-${k}="${escapeAttr(v)}"`).join(" ");
+          return `<button type="button" class="dash-alert" data-action="dashboard-filter" ${attrs}>${inner}<span class="dash-alert__cta">Ver →</span></button>`;
+        }
+        return `<div class="dash-alert dash-alert--static">${inner}</div>`;
+      }).join("")
+    : `<div class="dash-alert dash-alert--ok"><span class="dash-alert__dot">🟢</span><span class="dash-alert__txt">Sem alertas críticos. Tudo em ordem.</span></div>`;
+
+  const timelineHtml = next30.length
+    ? next30.map((item) => `
+        <article class="deadline-row">
+          <div>
+            <strong>Equip. ${escapeHtml(item.equipment)} · ${escapeHtml(item.plate || "-")}</strong>
+            <span>${escapeHtml(item.label)} · ${escapeHtml(formatDate(item.date))}</span>
+          </div>
+          ${renderDueBadge(item.date)}
+        </article>`).join("")
+    : '<p class="empty-state">Sem prazos de frota nos próximos 30 dias.</p>';
 
   return `
-    <section class="dashboard-layout">
-      <div class="panel dashboard-panel">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Gestão</p>
-            <h2>Dashboard operacional</h2>
-            <p>Indicadores principais de avarias e oficina.</p>
-          </div>
-        </div>
-        <div class="dashboard-grid">
-          ${renderDashboardCard("Aguarda oficina", management.waitingWorkshop, "Avarias abertas a aguardar entrada na oficina",
-            {"filter-key": "situation", "filter-value": "Aguarda entrada na oficina", "status-value": ""})}
-          ${renderDashboardCard("Em oficina", management.inWorkshop, "Avarias abertas com viatura em oficina",
-            {"filter-key": "situation", "filter-value": "Em oficina", "status-value": ""})}
-          ${renderDashboardCard("Aguarda peças", management.waitingParts, "Avarias abertas a aguardar peças",
-            {"filter-key": "situation", "filter-value": "Aguarda peças", "status-value": ""})}
-          ${renderDashboardCard("Oficina externa", management.externalWorkshop, "Avarias abertas em oficina externa",
-            {"filter-key": "search", "filter-value": "Externa", "status-value": ""})}
-          ${renderDashboardCard("Tempo médio interna", formatDaysMetric(management.avgInternalResolution), "Entrada em oficina até conclusão")}
-          ${renderDashboardCard("Tempo médio externa", formatDaysMetric(management.avgExternalResolution), "Entrada em oficina até conclusão")}
+    <section class="dash">
+      <div class="panel dash-block dash-block--wide">
+        <div class="panel-header"><div><p class="eyebrow">Frota</p><h2>Estado atual da frota</h2><p>Fotografia operacional do momento.</p></div></div>
+        <div class="dash-state-grid">
+          ${stateCard("Viaturas ativas", st.totalFleet, "Total de viaturas ativas", { view: "fleet" })}
+          ${stateCard("Em oficina", st.inWorkshop, "Avarias com viatura em oficina", { filter: { "filter-key": "situation", "filter-value": "Em oficina", "status-value": "" }, tone: "amber" })}
+          ${stateCard("Paradas", st.stopped, "Viaturas paradas por avaria", { filter: { "filter-key": "status", "filter-value": "Parado", "status-value": "" }, tone: "red" })}
+          ${stateCard("Aguarda peças", st.waitingParts, "Avarias a aguardar peças", { filter: { "filter-key": "situation", "filter-value": "Aguarda peças", "status-value": "" }, tone: "amber" })}
+          ${stateCard("Disponibilidade", st.availability + "%", "Frota disponível para operar", { tone: st.availability >= 80 ? "green" : st.availability >= 60 ? "amber" : "red" })}
         </div>
       </div>
 
-      <div class="panel">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Frota</p>
-            <h2>Próximas datas</h2>
-            <p>Contagem decrescente por tipo de registo.</p>
-          </div>
+      <div class="panel dash-block">
+        <div class="panel-header"><div><p class="eyebrow">Ação imediata</p><h2>Alertas imediatos</h2><p>Só o que está em incumprimento hoje.</p></div></div>
+        <div class="dash-alerts">${alertsHtml}</div>
+      </div>
+
+      <div class="panel dash-block">
+        <div class="panel-header"><div><p class="eyebrow">Oficina</p><h2>Situação na oficina</h2><p>Distribuição das intervenções em curso.</p></div></div>
+        <div class="dash-workshop">
+          ${stateCard("Interna", ws.interna, "Em oficina interna", { filter: { "filter-key": "search", "filter-value": "Interna", "status-value": "" } })}
+          ${stateCard("Externa", ws.externa, "Em oficina externa", { filter: { "filter-key": "search", "filter-value": "Externa", "status-value": "" } })}
+          ${stateCard("Aguarda peças", ws.waitingParts, "A aguardar peças", { filter: { "filter-key": "situation", "filter-value": "Aguarda peças", "status-value": "" } })}
+          ${stateCard("Sem previsão de saída", ws.semPrevisao, "Em oficina sem data de saída")}
         </div>
-        <nav class="subview-tabs" style="padding:12px 16px 0">${tabs}</nav>
-        <div class="deadline-list">
-          ${filtered.length ? filtered.map((item) => `
-            <article class="deadline-row">
-              <div>
-                <strong>Equip. ${escapeHtml(item.equipment)} · ${escapeHtml(item.plate || "-")}</strong>
-                <span>${escapeHtml(item.label)}</span>
-              </div>
-              ${renderDueBadge(item.date)}
-            </article>
-          `).join("") : '<p class="empty-state">Sem datas registadas para este tipo.</p>'}
-        </div>
+      </div>
+
+      <div class="panel dash-block dash-block--wide">
+        <div class="panel-header"><div><p class="eyebrow">Planeamento</p><h2>Próximos 30 dias</h2><p>Inspeções, tacógrafos, revisões, compressor e cubos numa timeline única.</p></div></div>
+        <div class="deadline-list">${timelineHtml}</div>
       </div>
     </section>
   `;
+}
+
+function getDashboardState() {
+  const active = state.breakdowns.filter((b) => b.status !== "Concluido");
+  const totalFleet = state.fleet.filter((f) => f.status === "Ativa").length || state.fleet.length;
+  const stopped = active.filter((b) => b.status === "Parado").length;
+  const inWorkshop = active.filter((b) => b.situation === "Em oficina").length;
+  const waitingParts = active.filter((b) => b.situation === "Aguarda peças").length;
+  const availability = totalFleet ? Math.round(((totalFleet - stopped) / totalFleet) * 100) : 0;
+  return { totalFleet, stopped, inWorkshop, waitingParts, availability };
+}
+
+function getImmediateAlerts() {
+  const active = state.breakdowns.filter((b) => b.status !== "Concluido");
+  const stopped = active.filter((b) => b.status === "Parado").length;
+  const inspExpired = state.fleet.filter((f) => f.inspectionAt && !isFleetNA(f.inspectionAt) && daysUntil(f.inspectionAt) < 0).length;
+  const tacoExpired = state.fleet.filter((f) => f.tachographAt && !isFleetNA(f.tachographAt) && daysUntil(f.tachographAt) < 0).length;
+  const stale = active.filter((b) => {
+    const ref = (b.lastNoteAt || b.reportedAt || "").slice(0, 10);
+    return ref && daysBetween(ref, todayISO()) > 7;
+  }).length;
+
+  const list = [];
+  if (stopped) list.push({ count: stopped, label: stopped === 1 ? "viatura parada" : "viaturas paradas", filter: { "filter-key": "status", "filter-value": "Parado", "status-value": "" } });
+  if (inspExpired) list.push({ count: inspExpired, label: inspExpired === 1 ? "inspeção vencida" : "inspeções vencidas", view: "fleet" });
+  if (tacoExpired) list.push({ count: tacoExpired, label: tacoExpired === 1 ? "tacógrafo vencido" : "tacógrafos vencidos", view: "fleet" });
+  if (stale) list.push({ count: stale, label: "avarias sem atualização há mais de 7 dias", view: "breakdowns" });
+  return list;
+}
+
+function getWorkshopBreakdown() {
+  const active = state.breakdowns.filter((b) => b.status !== "Concluido");
+  return {
+    interna: active.filter((b) => normalizeText(b.workshopType) === "interna").length,
+    externa: active.filter((b) => normalizeText(b.workshopType) === "externa").length,
+    waitingParts: active.filter((b) => b.situation === "Aguarda peças").length,
+    semPrevisao: active.filter((b) => b.situation === "Em oficina" && !b.expectedExitAt).length
+  };
 }
 
 function renderDashboardCard(label, value, detail, filterData) {

@@ -11,6 +11,7 @@ const FLEET_NA_DATE = "9999-12-31";
 // Detetado no carregamento remoto: ver loadRemoteState().
 let remoteFleetHasDriver = true;
 let remoteFleetHasRevision = true;
+let remoteFleetHasWorkshop = true;
 
 // Tipos de ausência de motorista (calendário de ausências, migração 003).
 const ABSENCE_TYPES = ["Férias", "Baixa médica"];
@@ -457,6 +458,9 @@ document.addEventListener("change", async (event) => {
   if (target.dataset.fleetDescription) {
     await updateFleetDescription(target.dataset.equipment, target.value);
   }
+  if (target.dataset.fleetWorkshop) {
+    await updateFleetWorkshop(target.dataset.equipment, target.value);
+  }
   if (target.id === "new-description-filter") {
     repopulatePlateOptions(target.value);
   }
@@ -746,6 +750,7 @@ async function loadRemoteState() {
   if (fleetResult.data.length) {
     remoteFleetHasDriver = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "driver");
     remoteFleetHasRevision = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "revision_at");
+    remoteFleetHasWorkshop = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "preferred_workshop");
   }
 
   if (!fleetResult.data.length && !breakdownsResult.data.length) {
@@ -762,11 +767,16 @@ async function loadRemoteState() {
   // Enquanto a coluna "driver" não existir na base, o motorista vive só
   // localmente (localStorage). Preserva os nomes já escritos ao recarregar a frota.
   const localDrivers = new Map((state.fleet || []).map((f) => [String(f.equipment), f.driver || ""]));
+  const localWorkshops = new Map((state.fleet || []).map((f) => [String(f.equipment), f.preferredWorkshop || ""]));
   const mapFleetRow = (row) => {
     const item = dbFleetToApp(row);
     if (!remoteFleetHasDriver) {
       const localDriver = localDrivers.get(String(item.equipment));
       if (localDriver) item.driver = localDriver;
+    }
+    if (!remoteFleetHasWorkshop) {
+      const localWorkshop = localWorkshops.get(String(item.equipment));
+      if (localWorkshop) item.preferredWorkshop = localWorkshop;
     }
     return item;
   };
@@ -854,6 +864,9 @@ function applyRemoteRow(payload, collection, mapper) {
     }
     if (collection === "fleet" && !remoteFleetHasRevision) {
       item.revisionAt = state.fleet[index].revisionAt || item.revisionAt;
+    }
+    if (collection === "fleet" && !remoteFleetHasWorkshop) {
+      item.preferredWorkshop = state.fleet[index].preferredWorkshop || item.preferredWorkshop;
     }
     state[collection][index] = item;
   } else {
@@ -1669,6 +1682,8 @@ function appFleetToDb(item) {
   if (remoteFleetHasDriver) row.driver = item.driver || null;
   // "Revisão" (só tratores) — só envia quando a coluna existe na base (migração 004).
   if (remoteFleetHasRevision) row.revision_at = item.revisionAt || null;
+  // Oficina preferencial (vem das Entidades) — só envia quando a coluna existe (migração 005).
+  if (remoteFleetHasWorkshop) row.preferred_workshop = item.preferredWorkshop || null;
   return row;
 }
 
@@ -1691,7 +1706,8 @@ function dbFleetToApp(row) {
     tachographAt: row.tachograph_calibration_at || null,
     compressorReviewAt: row.compressor_review_at || null,
     wheelHubReviewAt: row.wheel_hub_review_at || null,
-    revisionAt: row.revision_at || null
+    revisionAt: row.revision_at || null,
+    preferredWorkshop: row.preferred_workshop || ""
   };
 }
 
@@ -3039,6 +3055,7 @@ function renderFleet() {
               <th>Estado</th>
               <th>Empresa</th>
               <th>Motorista</th>
+              <th>Oficina preferencial</th>
               <th>Avarias abertas</th>
               <th>Inspeção</th>
               <th>Aferição tacógrafo</th>
@@ -3059,6 +3076,7 @@ function renderFleet() {
                 <td>${escapeHtml(item.status || "-")}</td>
                 <td>${renderFleetCompanyCell(item)}</td>
                 <td>${renderFleetDriverCell(item)}</td>
+                <td>${renderFleetOficinaCell(item)}</td>
                 <td>${activeCounts[item.equipment] || 0}</td>
                 <td>${renderFleetDateCell(item, "inspectionAt", "Data de inspeção")}</td>
                 <td>${renderFleetDateCell(item, "tachographAt", "Data de aferição tacógrafo")}</td>
@@ -3145,6 +3163,30 @@ function renderFleetDriverCell(item) {
   `;
 }
 
+function renderFleetOficinaCell(item) {
+  const current = (item.preferredWorkshop || "").trim();
+  const oficinas = entidadesByCategoria("Oficina");
+  const parts = [`<option value="">—</option>`];
+  let matched = false;
+  for (const o of oficinas) {
+    const sel = normalizeText(o.empresa) === normalizeText(current);
+    if (sel) matched = true;
+    parts.push(`<option value="${escapeAttr(o.empresa)}"${sel ? " selected" : ""}>${escapeHtml(o.empresa)}</option>`);
+  }
+  // Valor atual que não corresponde a nenhuma entidade da categoria Oficina: preserva-o.
+  if (current && !matched) {
+    parts.push(`<option value="${escapeAttr(current)}" selected>${escapeHtml(current)} (atual)</option>`);
+  }
+  return `
+    <select
+      class="fleet-workshop-select"
+      data-equipment="${escapeAttr(item.equipment)}"
+      data-fleet-workshop="true"
+      aria-label="Oficina preferencial equip. ${escapeAttr(item.equipment)}"
+    >${parts.join("")}</select>
+  `;
+}
+
 function renderFleetDescriptionCell(item) {
   const current = (item.description || "").trim();
   const match = current ? FLEET_DESCRIPTIONS.find((o) => normalizeText(o) === normalizeText(current)) : null;
@@ -3200,6 +3242,23 @@ async function updateFleetDriver(equipment, value) {
   const auditEvent = logFleetAudit(item, "driver", previous, next);
   saveState();
   showToast("Motorista guardado.");
+  await persistRemoteSafely(async () => {
+    await persistFleetRemote(item);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
+async function updateFleetWorkshop(equipment, value) {
+  const item = state.fleet.find((fleetItem) => String(fleetItem.equipment) === String(equipment));
+  if (!item) return;
+  const next = String(value || "").trim();
+  const previous = item.preferredWorkshop || "";
+  if (next === previous) return;
+  item.preferredWorkshop = next;
+  const auditEvent = logFleetAudit(item, "preferredWorkshop", previous, next);
+  saveState();
+  showToast("Oficina preferencial guardada.");
+  render();
   await persistRemoteSafely(async () => {
     await persistFleetRemote(item);
     await persistAuditRemote(auditEvent);

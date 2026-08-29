@@ -12,12 +12,29 @@ const FLEET_NA_DATE = "9999-12-31";
 let remoteFleetHasDriver = true;
 let remoteFleetHasRevision = true;
 let remoteFleetHasWorkshop = true;
+let remoteBreakdownHasOccurrence = true;
 
 // Tipos de ausência de motorista (calendário de ausências, migração 003).
 const ABSENCE_TYPES = ["Férias", "Baixa médica"];
 
 const ENTIDADE_TIPOS = ["Externa", "Interna"];
 const ENTIDADE_CATEGORIAS = ["Oficina", "Fornecedor", "Motorista", "Cliente", "Seguradora", "Outro"];
+
+// Ocorrências (redesign ARGOS): tipo de intervenção + numeração + prioridade.
+const INTERVENTION_TYPES = ["Corretiva", "Garantia", "Preditiva", "Preventiva", "Sinistro"];
+const INTERVENTION_PREFIX = { "Corretiva": "CRT", "Garantia": "GRT", "Preditiva": "PRD", "Preventiva": "PRV", "Sinistro": "SIN" };
+const PRIORITIES = [
+  ["P1", "Crítica — paragem imediata"],
+  ["P2", "Alta — 24 a 48h"],
+  ["P3", "Média — planeada"],
+  ["P4", "Baixa — rotina / melhoria"]
+];
+const OCCURRENCE_STAGES = [
+  ["", "Todas"],
+  ["agendadas", "Agendadas"],
+  ["curso", "Em curso"],
+  ["concluidas", "Concluídas"]
+];
 
 // Descrições padronizadas dos equipamentos (menu na Frota).
 const FLEET_DESCRIPTIONS = [
@@ -436,6 +453,11 @@ document.addEventListener("click", async (event) => {
     saveState();
     render();
   }
+  if (action === "occurrence-stage") {
+    state.filters.occurrenceStage = button.dataset.stage || "";
+    saveState();
+    render();
+  }
 });
 
 // Fechar modal com a tecla Escape.
@@ -635,7 +657,8 @@ function makeInitialState() {
       ausenciaSort: "date",
       ausenciaSearch: "",
       entidadeSearch: "",
-      entidadeCategoria: ""
+      entidadeCategoria: "",
+      occurrenceStage: ""
     }
   };
 }
@@ -665,6 +688,9 @@ function normalizeBreakdownFields(item) {
     ...item,
     status,
     situation,
+    interventionType: item.interventionType || "Corretiva",
+    occurrenceNumber: item.occurrenceNumber || "",
+    priority: item.priority || "",
     attachments: normalizeAttachments(item.attachments)
   };
 }
@@ -769,6 +795,9 @@ async function loadRemoteState() {
     remoteFleetHasDriver = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "driver");
     remoteFleetHasRevision = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "revision_at");
     remoteFleetHasWorkshop = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "preferred_workshop");
+  }
+  if (breakdownsResult.data.length) {
+    remoteBreakdownHasOccurrence = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "occurrence_number");
   }
 
   if (!fleetResult.data.length && !breakdownsResult.data.length) {
@@ -885,6 +914,12 @@ function applyRemoteRow(payload, collection, mapper) {
     }
     if (collection === "fleet" && !remoteFleetHasWorkshop) {
       item.preferredWorkshop = state.fleet[index].preferredWorkshop || item.preferredWorkshop;
+    }
+    if (collection === "breakdowns" && !remoteBreakdownHasOccurrence) {
+      const prev = state.breakdowns[index];
+      item.occurrenceNumber = prev.occurrenceNumber || item.occurrenceNumber;
+      item.priority = prev.priority || item.priority;
+      item.interventionType = prev.interventionType || item.interventionType;
     }
     state[collection][index] = item;
   } else {
@@ -1753,6 +1788,13 @@ function appBreakdownToDb(item) {
   };
   const attachments = normalizeAttachments(item.attachments);
   if (attachments.length) row.attachments = attachments;
+  // Ocorrências (tipo de intervenção, numeração, prioridade) — só envia quando
+  // as colunas já existem na base (migração 006), para não partir o upsert.
+  if (remoteBreakdownHasOccurrence) {
+    row.intervention_type = item.interventionType || null;
+    row.occurrence_number = item.occurrenceNumber || null;
+    row.priority = item.priority || null;
+  }
   // Ligação à vistoria de origem — só envia as colunas quando existe ligação,
   // para não exigir as colunas nas avarias antigas (sem ligação).
   if (item.vistoriaId) {
@@ -1784,6 +1826,9 @@ function dbBreakdownToApp(row) {
     lastNoteAt: row.last_note_at || null,
     historyNotes: row.history_notes || "",
     attachments: normalizeAttachments(row.attachments),
+    interventionType: row.intervention_type || "Corretiva",
+    occurrenceNumber: row.occurrence_number || "",
+    priority: row.priority || "",
     vistoriaId: row.vistoria_id || "",
     vistoriaItem: row.vistoria_item || "",
     vistoriaSection: row.vistoria_section || "",
@@ -2645,7 +2690,7 @@ function renderMultiFilter(name, label, values) {
 }
 
 function renderFilters(context) {
-  const searchPlaceholder = context === "meeting" ? "Pesquisar equipamento, matrícula, oficina ou nota" : "Pesquisar avarias";
+  const searchPlaceholder = context === "meeting" ? "Pesquisar equipamento, matrícula, oficina ou nota" : "Pesquisar ocorrências";
   const sortButton = context === "breakdowns" ? `
       <button class="ghost-button" type="button" data-action="toggle-breakdown-sort" title="Inverter ordenação por data de avaria">
         <span data-icon="sort"></span>
@@ -2696,11 +2741,12 @@ function renderDetail(breakdown) {
   return `
     <div class="detail-head">
       <div>
-        <p class="eyebrow">Atualização rápida</p>
+        <p class="eyebrow">${escapeHtml(breakdown.occurrenceNumber || "Ocorrência")} · ${escapeHtml(breakdown.interventionType || "Corretiva")}</p>
         <h2>Equip. ${escapeHtml(breakdown.equipment || "-")}</h2>
       </div>
       <div class="detail-subtitle">
         <span>${escapeHtml(breakdown.plate || "-")}</span>
+        ${priorityBadge(breakdown.priority)}
         ${statusBadge(breakdown.status)}
       </div>
     </div>
@@ -2722,6 +2768,19 @@ function renderDetail(breakdown) {
 
     <form class="quick-form" data-form="quick-update">
       <div class="form-grid">
+        <label class="field">
+          <span>Tipo de intervenção</span>
+          <select name="interventionType">
+            ${INTERVENTION_TYPES.map((t) => `<option value="${escapeAttr(t)}" ${(breakdown.interventionType || "Corretiva") === t ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Prioridade</span>
+          <select name="priority">
+            <option value="" ${!breakdown.priority ? "selected" : ""}>—</option>
+            ${PRIORITIES.map(([p, label]) => `<option value="${escapeAttr(p)}" ${breakdown.priority === p ? "selected" : ""}>${escapeHtml(p)} · ${escapeHtml(label)}</option>`).join("")}
+          </select>
+        </label>
         <label class="field">
           <span>Estado</span>
           <select name="status">
@@ -2813,6 +2872,11 @@ function getBreakdownCompany(breakdown) {
 
 function breakdownListRow(item) {
   return `<tr>
+    <td class="occ-cell">
+      <strong>${escapeHtml(item.occurrenceNumber || "—")}</strong>
+      <span>${escapeHtml(item.interventionType || "Corretiva")}</span>
+      ${priorityBadge(item.priority)}
+    </td>
     <td><strong>${escapeHtml(item.equipment || "-")}</strong></td>
     <td>${escapeHtml(item.plate || "-")}</td>
     <td>${escapeHtml(getBreakdownCompany(item) || "-")}</td>
@@ -2838,23 +2902,60 @@ function breakdownListRow(item) {
   </tr>`;
 }
 
+function generateOccurrenceNumber(interventionType, dateISO) {
+  const prefix = INTERVENTION_PREFIX[interventionType] || "CRT";
+  const year = (dateISO || todayISO()).slice(0, 4);
+  let max = 0;
+  for (const b of state.breakdowns) {
+    const m = String(b.occurrenceNumber || "").match(/^([A-Z]{3})-(\d{4})-(\d+)$/);
+    if (m && m[1] === prefix && m[2] === year) {
+      const n = parseInt(m[3], 10);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+  }
+  return `${prefix}-${year}-${String(max + 1).padStart(4, "0")}`;
+}
+
+function priorityBadge(priority) {
+  if (!priority) return "";
+  const cls = String(priority).toLowerCase();
+  return `<span class="prio-badge prio-badge--${escapeAttr(cls)}" title="Prioridade ${escapeAttr(priority)}">${escapeHtml(priority)}</span>`;
+}
+
+function matchesOccurrenceStage(item, stage) {
+  if (!stage) return true;
+  if (stage === "agendadas") return item.status === "Agendado";
+  if (stage === "concluidas") return item.status === "Concluido";
+  if (stage === "curso") return item.status !== "Concluido" && item.status !== "Agendado";
+  return true;
+}
+
 function renderBreakdowns() {
-  const list = sortBreakdownsByDate(getFilteredBreakdowns(false), state.breakdownsSort);
+  const stage = state.filters.occurrenceStage || "";
+  const list = sortBreakdownsByDate(getFilteredBreakdowns(false), state.breakdownsSort)
+    .filter((item) => matchesOccurrenceStage(item, stage));
   return `
     <section class="page-grid">
       <div class="panel">
         <div class="panel-header">
           <div>
             <p class="eyebrow">Registos</p>
-            <h2>Avarias</h2>
+            <h2>Ocorrências</h2>
             <p>${list.length} registos encontrados</p>
           </div>
+        </div>
+        <div class="chip-filters occurrence-stages">
+          ${OCCURRENCE_STAGES.map(([v, l]) => {
+            const active = (state.filters.occurrenceStage || "") === v;
+            return `<button type="button" class="chip-filter ${active ? "active" : ""}" data-action="occurrence-stage" data-stage="${escapeAttr(v)}">${escapeHtml(l)}</button>`;
+          }).join("")}
         </div>
         ${renderFilters("breakdowns")}
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
+                <th>Ocorrência</th>
                 <th>Equip.</th>
                 <th>Matrícula</th>
                   <th>Empresa</th>
@@ -2869,7 +2970,7 @@ function renderBreakdowns() {
               </tr>
             </thead>
             <tbody>
-              ${renderMonthGroups("breakdowns", list, (item) => item.reportedAt, 11, breakdownListRow, "avaria", "avarias", "Sem avarias para estes filtros.")}
+              ${renderMonthGroups("breakdowns", list, (item) => item.reportedAt, 12, breakdownListRow, "ocorrência", "ocorrências", "Sem ocorrências para estes filtros.")}
             </tbody>
           </table>
         </div>
@@ -2895,13 +2996,26 @@ function renderNewBreakdown() {
       <div class="panel-header">
         <div>
           <p class="eyebrow">Entrada</p>
-          <h2>Nova avaria${link ? " (origem: vistoria)" : ""}</h2>
-          <p>Registo com data, estado inicial e primeira nota.</p>
+          <h2>Nova ocorrência${link ? " (origem: vistoria)" : ""}</h2>
+          <p>O número é gerado automaticamente pelo tipo de intervenção (ex.: CRT-${todayISO().slice(0, 4)}-0001).</p>
         </div>
       </div>
       ${banner}
       <form class="data-form" data-form="new-breakdown">
         <div class="form-grid">
+          <label class="field">
+            <span>Tipo de intervenção</span>
+            <select name="interventionType" required>
+              ${INTERVENTION_TYPES.map((t) => `<option value="${escapeAttr(t)}">${escapeHtml(t)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Prioridade</span>
+            <select name="priority">
+              <option value="">—</option>
+              ${PRIORITIES.map(([p, label]) => `<option value="${escapeAttr(p)}">${escapeHtml(p)} · ${escapeHtml(label)}</option>`).join("")}
+            </select>
+          </label>
           <label class="field">
             <span>Descrição</span>
             <select id="new-description-filter" name="descriptionFilter">
@@ -2977,8 +3091,8 @@ function renderNewBreakdown() {
         </div>
         <div class="form-actions">
           <button class="primary-button" type="submit">
-            <span data-icon="plus"></span>
-            <span>Criar avaria</span>
+            <span data-icon="check"></span>
+            <span>Gravar ocorrência</span>
           </button>
         </div>
       </form>
@@ -3605,6 +3719,8 @@ async function handleQuickUpdate(form, intent) {
   breakdown.workshopEntryAt = emptyToNull(data.get("workshopEntryAt"));
   breakdown.workshop = String(data.get("workshop") || "").trim();
   breakdown.type = String(data.get("type") || breakdown.type || "").trim();
+  if (data.has("interventionType")) breakdown.interventionType = String(data.get("interventionType") || breakdown.interventionType || "Corretiva");
+  if (data.has("priority")) breakdown.priority = String(data.get("priority") || "");
   breakdown.driver = String(data.get("driver") || "").trim();
   breakdown.description = String(data.get("description") || "").trim();
 
@@ -3694,6 +3810,9 @@ async function handleNewBreakdown(form) {
   const equipment = fleetItem.equipment;
   const reportedAt = String(data.get("reportedAt") || todayISO());
   const description = String(data.get("description") || "").trim();
+  const interventionType = String(data.get("interventionType") || "Corretiva");
+  const priority = String(data.get("priority") || "");
+  const occurrenceNumber = generateOccurrenceNumber(interventionType, reportedAt);
   const id = generateId();
   const wasRemoteReady = remoteStatus.ready;
   let attachments = [];
@@ -3710,6 +3829,9 @@ async function handleNewBreakdown(form) {
     id,
     equipment,
     plate: fleetItem.plate || plateInput,
+    interventionType,
+    occurrenceNumber,
+    priority,
     type: String(data.get("type") || "Outro"),
     status: String(data.get("status") || "Parado"),
     situation: String(data.get("situation") || "").trim(),
@@ -3744,10 +3866,10 @@ async function handleNewBreakdown(form) {
   state.selectedId = breakdown.id;
   state.currentView = "meeting";
   const originNote = breakdown.vistoriaId ? ` | Origem: vistoria ${formatDate(breakdown.vistoriaDate)} (${breakdown.vistoriaItem})` : "";
-  const auditEvent = logAudit(breakdown, "Nova avaria", `${attachmentNote ? `${description} | Anexos: ${attachmentNote}` : description}${originNote}`);
+  const auditEvent = logAudit(breakdown, "Nova ocorrência", `${occurrenceNumber} · ${interventionType}${priority ? ` · ${priority}` : ""} — ${attachmentNote ? `${description} | Anexos: ${attachmentNote}` : description}${originNote}`);
   recordMeetingEvent("new", breakdown, description);
   saveState();
-  showToast("Nova avaria criada.");
+  showToast(`Ocorrência ${occurrenceNumber} criada.`);
   render();
   if (typeof syncBreakdownToTrello === "function") {
     syncBreakdownToTrello(breakdown, "");

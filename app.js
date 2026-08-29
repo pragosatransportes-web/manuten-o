@@ -364,6 +364,11 @@ document.addEventListener("click", async (event) => {
   if (action === "delete-fleet") {
     await deleteFleetItem(button.dataset.equipment);
   }
+  if (action === "fleet-view") {
+    state.fleetView = button.dataset.mode === "table" ? "table" : "cards";
+    saveState();
+    render();
+  }
   if (action === "ausencia-prev-month") shiftAusenciaMonth(-1);
   if (action === "ausencia-next-month") shiftAusenciaMonth(1);
   if (action === "ausencia-today") {
@@ -600,6 +605,7 @@ function makeInitialState() {
     vistorias: [],
     ausencias: [],
     entidades: [],
+    fleetView: "cards",
     ausenciaMonth: currentMonthISO(),
     breakdowns,
     snapshots: seed.snapshots || [],
@@ -2971,6 +2977,7 @@ function renderFleet() {
     return acc;
   }, {});
   const list = getFilteredFleet();
+  const fleetView = state.fleetView === "table" ? "table" : "cards";
 
   const fleetStatuses = seed.options?.fleetStatuses || ["Ativa", "Manutencao preventiva", "Vendida", "Abatida", "Cedida", "Inativa", "Alugada"];
 
@@ -3040,9 +3047,20 @@ function renderFleet() {
           </div>
         </form>
       </details>
-      <div class="toolbar">
+      <div class="toolbar fleet-toolbar">
         <input type="search" data-filter="fleetSearch" value="${escapeAttr(state.filters.fleetSearch)}" placeholder="Pesquisar equipamento, matrícula ou marca">
+        <div class="fleet-viewtoggle" role="group" aria-label="Modo de visualização">
+          <button type="button" class="${fleetView === "cards" ? "active" : ""}" data-action="fleet-view" data-mode="cards">Cartões</button>
+          <button type="button" class="${fleetView === "table" ? "active" : ""}" data-action="fleet-view" data-mode="table">Tabela</button>
+        </div>
       </div>
+      ${fleetView === "table" ? renderFleetTable(list, activeCounts) : renderFleetCards(list, activeCounts)}
+    </section>
+  `;
+}
+
+function renderFleetTable(list, activeCounts) {
+  return `
       <div class="table-wrap">
         <table>
           <thead>
@@ -3092,9 +3110,61 @@ function renderFleet() {
             `).join("")}
           </tbody>
         </table>
+      </div>`;
+}
+
+function renderFleetCards(list, activeCounts) {
+  if (!list.length) return '<p class="empty-state">Sem viaturas para esta pesquisa.</p>';
+  return `<div class="fleet-grid">${list.map((item) => fleetCard(item, activeCounts[item.equipment] || 0)).join("")}</div>`;
+}
+
+function fleetCard(item, openCount) {
+  const dateFields = [
+    ["inspectionAt", "Inspeção"],
+    ["tachographAt", "Tacógrafo"],
+    ["compressorReviewAt", "Compressor"],
+    ["wheelHubReviewAt", "Cubos"]
+  ];
+  if (isTratorFleet(item)) dateFields.push(["revisionAt", "Revisão"]);
+  const badges = dateFields.map(([f, l]) => fleetCardDateBadge(item, f, l)).filter(Boolean).join("");
+  const statusCls = normalizeText(item.status) === "ativa" ? "ativa" : "outro";
+  const metaBits = [];
+  if (item.description) metaBits.push(escapeHtml(item.description));
+  const marca = item.brand || item.model;
+  if (marca) metaBits.push(escapeHtml(marca) + (item.year ? ` ${escapeHtml(String(item.year))}` : ""));
+  const openTag = openCount ? `<span class="fleet-open">${openCount} avaria${openCount > 1 ? "s" : ""} aberta${openCount > 1 ? "s" : ""}</span>` : "";
+  const metaLine = [metaBits.join(" · "), openTag].filter(Boolean).join(" · ");
+  return `
+    <article class="fleet-card">
+      <header class="fleet-card__head">
+        <div class="fleet-card__id">
+          <strong>${escapeHtml(item.plate || "—")}</strong>
+          <span>Equip. ${escapeHtml(item.equipment || "-")}</span>
+        </div>
+        <div class="fleet-card__head-right">
+          ${item.fleetCompany ? `<span class="fleet-company-tag">${escapeHtml(item.fleetCompany)}</span>` : ""}
+          <span class="fleet-status fleet-status--${statusCls}">${escapeHtml(item.status || "-")}</span>
+        </div>
+      </header>
+      ${metaLine ? `<p class="fleet-card__meta">${metaLine}</p>` : ""}
+      ${badges ? `<div class="fleet-card__badges">${badges}</div>` : ""}
+      <div class="fleet-card__controls">
+        <label class="fleet-mini"><span>Motorista</span>${renderFleetDriverCell(item)}</label>
+        <label class="fleet-mini"><span>Oficina preferencial</span>${renderFleetOficinaCell(item)}</label>
       </div>
-    </section>
-  `;
+      <footer class="fleet-card__foot">
+        <button class="icon-button" type="button" data-action="delete-fleet" data-equipment="${escapeAttr(item.equipment)}" title="Remover viatura"><span data-icon="trash"></span></button>
+      </footer>
+    </article>`;
+}
+
+function fleetCardDateBadge(item, field, label) {
+  const value = item[field];
+  if (isFleetNA(value)) return `<span class="fleet-badge fleet-badge--empty">${escapeHtml(label)}: N/A</span>`;
+  if (!value) return "";
+  const due = getDueState(value);
+  const dot = due.className === "red" ? "🔴" : due.className === "yellow" ? "🟡" : due.className === "green" ? "🟢" : "⚪";
+  return `<span class="fleet-badge fleet-badge--${due.className}" title="${escapeAttr(label)} — ${escapeAttr(formatDate(value))}">${dot} ${escapeHtml(label)} · ${escapeHtml(due.label)}</span>`;
 }
 
 function renderFleetDateCell(item, field, label) {

@@ -1048,6 +1048,35 @@ body.modal-open { overflow: hidden; }
 .entidade-cat--seguradora { background: #fef3c7; color: var(--amber); }
 .entidade-card--outro { border-left-color: var(--line-strong); }
 
+/* ---- Frota: cartões + alternador Cartões/Tabela ---- */
+.fleet-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+.fleet-viewtoggle { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 999px; overflow: hidden; }
+.fleet-viewtoggle button { padding: 6px 14px; font-size: 12.5px; border: none; background: var(--surface); color: var(--muted); cursor: pointer; }
+.fleet-viewtoggle button.active { background: var(--accent); color: #fff; }
+.fleet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; padding: 16px 18px; }
+.fleet-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); transition: box-shadow 150ms; }
+.fleet-card:hover { box-shadow: var(--shadow-sm); }
+.fleet-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.fleet-card__id strong { font-size: 16px; color: var(--ink); letter-spacing: 0.3px; }
+.fleet-card__id span { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.fleet-card__head-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.fleet-company-tag { font-size: 10px; font-weight: 700; color: var(--muted); background: var(--surface-soft); border: 1px solid var(--line); padding: 2px 6px; border-radius: 4px; }
+.fleet-status { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-soft); color: var(--muted); white-space: nowrap; }
+.fleet-status--ativa { background: #dcfce7; color: var(--green); }
+.fleet-card__meta { margin: 0; font-size: 12.5px; color: var(--muted); }
+.fleet-open { color: var(--red); font-weight: 600; }
+.fleet-card__badges { display: flex; flex-wrap: wrap; gap: 5px; }
+.fleet-badge { font-size: 11px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-soft); color: var(--ink); white-space: nowrap; }
+.fleet-badge--red { background: #fef2f2; border-color: #fecaca; color: var(--red); }
+.fleet-badge--yellow { background: #fffbeb; border-color: #fde68a; color: var(--amber); }
+.fleet-badge--green { background: #f0fdf4; border-color: #bbf7d0; color: var(--green); }
+.fleet-badge--empty { color: var(--muted); }
+.fleet-card__controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.fleet-mini { display: grid; gap: 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.fleet-mini input, .fleet-mini select { width: 100%; font-size: 13px; font-weight: 400; color: var(--ink); padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); }
+.fleet-card__foot { display: flex; justify-content: flex-end; }
+@media (max-width: 560px) { .fleet-card__controls { grid-template-columns: 1fr; } }
+
 .fleet-date-cell { display: grid; gap: 5px; min-width: 148px; }
 
 .fleet-date-cell__foot {

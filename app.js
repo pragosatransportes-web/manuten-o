@@ -15,6 +15,9 @@ let remoteFleetHasRevision = true;
 // Tipos de ausência de motorista (calendário de ausências, migração 003).
 const ABSENCE_TYPES = ["Férias", "Baixa médica"];
 
+const ENTIDADE_TIPOS = ["Externa", "Interna"];
+const ENTIDADE_CATEGORIAS = ["Oficina", "Fornecedor", "Motorista", "Cliente", "Seguradora", "Outro"];
+
 // Descrições padronizadas dos equipamentos (menu na Frota).
 const FLEET_DESCRIPTIONS = [
   "Trator",
@@ -144,7 +147,7 @@ try { isAdmin = sessionStorage.getItem(ADMIN_STORAGE_KEY) === "1"; } catch (e) {
 // Só as ações de ELIMINAR ficam reservadas ao Administrador.
 // Tudo o resto (atualizar estados, concluir, editar, acrescentar) é livre.
 const ADMIN_ACTIONS = new Set([
-  "delete-fleet", "delete-ausencia", "delete-vistoria",
+  "delete-fleet", "delete-ausencia", "delete-vistoria", "delete-entidade",
   "meeting-event-delete", "dock-item-delete", "delete-meeting"
 ]);
 const ADMIN_FORMS = new Set();
@@ -400,6 +403,28 @@ document.addEventListener("click", async (event) => {
   if (action === "avaria-from-vistoria") {
     startAvariaFromVistoria(button.dataset.id, button.dataset.section, button.dataset.item);
   }
+  if (action === "close-modal") {
+    closeModal();
+  }
+  if (action === "new-entidade") {
+    openEntidadeModal("");
+  }
+  if (action === "edit-entidade") {
+    openEntidadeModal(button.dataset.id);
+  }
+  if (action === "delete-entidade") {
+    await deleteEntidade(button.dataset.id);
+  }
+  if (action === "entidade-cat") {
+    state.filters.entidadeCategoria = button.dataset.cat || "";
+    saveState();
+    render();
+  }
+});
+
+// Fechar modal com a tecla Escape.
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && isModalOpen()) closeModal();
 });
 
 document.addEventListener("input", (event) => {
@@ -515,6 +540,10 @@ document.addEventListener("submit", async (event) => {
     event.preventDefault();
     await handleEditVistoria(form);
   }
+  if (form.dataset.form === "entidade") {
+    event.preventDefault();
+    await handleSaveEntidade(form);
+  }
 });
 
 function loadState() {
@@ -566,6 +595,7 @@ function makeInitialState() {
     fleet: seed.fleet || [],
     vistorias: [],
     ausencias: [],
+    entidades: [],
     ausenciaMonth: currentMonthISO(),
     breakdowns,
     snapshots: seed.snapshots || [],
@@ -581,7 +611,9 @@ function makeInitialState() {
       vistoriaType: "",
       vistoriaResult: "",
       ausenciaSort: "date",
-      ausenciaSearch: ""
+      ausenciaSearch: "",
+      entidadeSearch: "",
+      entidadeCategoria: ""
     }
   };
 }
@@ -693,14 +725,15 @@ function updateSyncStatus(label, className, ready) {
 }
 
 async function loadRemoteState() {
-  const [fleetResult, breakdownsResult, snapshotsResult, auditResult, vistoriasResult, meetingsResult, ausenciasResult] = await Promise.all([
+  const [fleetResult, breakdownsResult, snapshotsResult, auditResult, vistoriasResult, meetingsResult, ausenciasResult, entidadesResult] = await Promise.all([
     remoteClient.from("avarias_fleet").select("*").order("equipment", { ascending: true }),
     remoteClient.from("avarias_breakdowns").select("*").order("updated_at", { ascending: false }),
     remoteClient.from("avarias_snapshots").select("*").order("date", { ascending: true }),
     remoteClient.from("avarias_audit_events").select("*").order("at", { ascending: false }),
     remoteClient.from("avarias_vistorias").select("*").order("date", { ascending: false }),
     remoteClient.from("avarias_reunioes").select("*").order("started_at", { ascending: false }),
-    remoteClient.from("avarias_ausencias").select("*").order("start_at", { ascending: true })
+    remoteClient.from("avarias_ausencias").select("*").order("start_at", { ascending: true }),
+    remoteClient.from("avarias_entidades").select("*").order("empresa", { ascending: true })
   ]);
 
   [fleetResult, breakdownsResult, snapshotsResult, auditResult].forEach((result) => {
@@ -746,6 +779,7 @@ async function loadRemoteState() {
     vistorias: vistoriasResult.error ? (state.vistorias || []) : vistoriasResult.data.map(dbVistoriaToApp),
     meetings: meetingsResult.error ? (state.meetings || []) : meetingsResult.data.map(dbMeetingToApp),
     ausencias: ausenciasResult.error ? (state.ausencias || []) : ausenciasResult.data.map(dbAusenciaToApp),
+    entidades: entidadesResult.error ? (state.entidades || []) : entidadesResult.data.map(dbEntidadeToApp),
     breakdowns,
     snapshots: snapshotsResult.data.map(dbSnapshotToApp),
     audit: auditResult.data.length ? auditResult.data.map(dbAuditToApp) : buildAudit(breakdowns),
@@ -795,6 +829,9 @@ function subscribeRemoteChanges() {
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "avarias_ausencias" }, (payload) => {
       applyRemoteRow(payload, "ausencias", dbAusenciaToApp);
+    })
+    .on("postgres_changes", { event: "*", schema: "public", table: "avarias_entidades" }, (payload) => {
+      applyRemoteRow(payload, "entidades", dbEntidadeToApp);
     })
     .subscribe();
 }
@@ -910,6 +947,52 @@ function dbAusenciaToApp(row) {
     startAt: row.start_at || "",
     endAt: row.end_at || "",
     notes: row.notes || "",
+    createdAt: row.created_at || "",
+    createdBy: row.created_by || ""
+  };
+}
+
+async function persistEntidadeRemote(entidade) {
+  if (!remoteStatus.ready || !remoteClient || !entidade) return;
+  updateSyncStatus("A guardar entidade", "syncing", true);
+  const { error } = await remoteClient
+    .from("avarias_entidades")
+    .upsert(appEntidadeToDb(entidade), { onConflict: "id" });
+  if (error) throw error;
+  updateSyncStatus("Partilhado em tempo real", "remote", true);
+}
+
+async function deleteEntidadeRemote(id) {
+  if (!remoteStatus.ready || !remoteClient) return;
+  const { error } = await remoteClient.from("avarias_entidades").delete().eq("id", String(id));
+  if (error) throw error;
+}
+
+function appEntidadeToDb(item) {
+  return {
+    id: String(item.id),
+    empresa: item.empresa || "",
+    tipo: item.tipo || null,
+    categoria: item.categoria || null,
+    contacto_nome: item.contactoNome || null,
+    telefone: item.telefone || null,
+    email: item.email || null,
+    notas: item.notas || null,
+    created_at: item.createdAt || new Date().toISOString(),
+    created_by: item.createdBy || remoteConfig.operator || "Utilizador"
+  };
+}
+
+function dbEntidadeToApp(row) {
+  return {
+    id: String(row.id),
+    empresa: row.empresa || "",
+    tipo: row.tipo || "",
+    categoria: row.categoria || "",
+    contactoNome: row.contacto_nome || "",
+    telefone: row.telefone || "",
+    email: row.email || "",
+    notas: row.notas || "",
     createdAt: row.created_at || "",
     createdBy: row.created_by || ""
   };
@@ -2026,6 +2109,7 @@ function render(focusSelector = "") {
     new: renderNewBreakdown,
     fleet: renderFleet,
     vistoria: renderVistoria,
+    entidades: renderEntidades,
     ausencias: renderAusencias,
     audit: renderAudit
   };
@@ -3549,6 +3633,208 @@ function logFleetAudit(item, field, previous, next) {
   };
   state.audit.unshift(auditEvent);
   return auditEvent;
+}
+
+// ── MODAL (infra reutilizável) ────────────────────────────────────────────
+
+function openModal(title, bodyHtml, opts = {}) {
+  const root = document.querySelector("#modal-root");
+  if (!root) return;
+  const size = opts.size ? ` modal--${opts.size}` : "";
+  root.innerHTML = `
+    <div class="modal-overlay">
+      <div class="modal${size}" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
+        <div class="modal__head">
+          <h3>${escapeHtml(title)}</h3>
+          <button class="icon-button" type="button" data-action="close-modal" title="Fechar"><span data-icon="x"></span></button>
+        </div>
+        <div class="modal__body">${bodyHtml}</div>
+      </div>
+    </div>`;
+  hydrateIcons();
+  document.body.classList.add("modal-open");
+  const overlay = root.querySelector(".modal-overlay");
+  if (overlay) overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeModal(); });
+  const first = root.querySelector("input, select, textarea");
+  if (first) setTimeout(() => first.focus(), 30);
+}
+
+function closeModal() {
+  const root = document.querySelector("#modal-root");
+  if (root) root.innerHTML = "";
+  document.body.classList.remove("modal-open");
+}
+
+function isModalOpen() {
+  const root = document.querySelector("#modal-root");
+  return !!(root && root.firstElementChild);
+}
+
+// ── ENTIDADES (mini-CRM: oficinas, fornecedores, motoristas, contactos) ────
+
+function entidadeCategoriaClass(cat) {
+  const c = normalizeText(cat || "");
+  if (c.includes("oficina")) return "oficina";
+  if (c.includes("fornecedor")) return "fornecedor";
+  if (c.includes("motorista")) return "motorista";
+  if (c.includes("cliente")) return "cliente";
+  if (c.includes("segurad")) return "seguradora";
+  return "outro";
+}
+
+function getFilteredEntidades() {
+  const term = normalizeText(state.filters.entidadeSearch || "");
+  const cat = state.filters.entidadeCategoria || "";
+  return state.entidades.filter((e) => {
+    if (cat && e.categoria !== cat) return false;
+    if (!term) return true;
+    return normalizeText(`${e.empresa} ${e.categoria} ${e.tipo} ${e.contactoNome} ${e.telefone} ${e.email} ${e.notas}`).includes(term);
+  });
+}
+
+// Entidades de uma categoria — usado por dropdowns de outros módulos (ex.: oficina preferencial).
+function entidadesByCategoria(categoria) {
+  return state.entidades
+    .filter((e) => normalizeText(e.categoria) === normalizeText(categoria))
+    .sort((a, b) => a.empresa.localeCompare(b.empresa, "pt"));
+}
+
+function renderEntidades() {
+  const list = getFilteredEntidades().sort((a, b) => a.empresa.localeCompare(b.empresa, "pt"));
+  const total = state.entidades.length;
+  const catChips = ["", ...ENTIDADE_CATEGORIAS].map((c) => {
+    const active = (state.filters.entidadeCategoria || "") === c;
+    const label = c || "Todas";
+    const count = c ? state.entidades.filter((e) => e.categoria === c).length : total;
+    return `<button type="button" class="chip-filter ${active ? "active" : ""}" data-action="entidade-cat" data-cat="${escapeAttr(c)}">${escapeHtml(label)}${count ? ` (${count})` : ""}</button>`;
+  }).join("");
+
+  const cards = list.length
+    ? list.map(entidadeCard).join("")
+    : `<p class="empty-state">${total ? "Sem entidades para este filtro." : "Ainda não há entidades. Comece por adicionar as suas oficinas e fornecedores."}</p>`;
+
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Diretório</p>
+          <h2>Entidades</h2>
+          <p>Oficinas, fornecedores, motoristas e contactos — a fonte única do centro operacional.</p>
+        </div>
+        <div class="panel-header__actions">
+          <button class="primary-button" type="button" data-action="new-entidade"><span data-icon="plus"></span><span>Nova entidade</span></button>
+        </div>
+      </div>
+      <div class="entidade-toolbar">
+        <input type="search" class="entidade-search" data-filter="entidadeSearch" value="${escapeAttr(state.filters.entidadeSearch || "")}" placeholder="Pesquisar (empresa, contacto, telefone, email…)">
+        <div class="chip-filters">${catChips}</div>
+      </div>
+      <div class="entidade-grid">${cards}</div>
+    </section>`;
+}
+
+function entidadeCard(e) {
+  const cat = entidadeCategoriaClass(e.categoria);
+  const rows = [];
+  if (e.contactoNome) rows.push(`<div><span class="ico">👤</span>${escapeHtml(e.contactoNome)}</div>`);
+  if (e.telefone) rows.push(`<div><span class="ico">📞</span><a href="tel:${escapeAttr(e.telefone.replace(/\s+/g, ""))}">${escapeHtml(e.telefone)}</a></div>`);
+  if (e.email) rows.push(`<div><span class="ico">✉️</span><a href="mailto:${escapeAttr(e.email)}">${escapeHtml(e.email)}</a></div>`);
+  return `
+    <article class="entidade-card entidade-card--${cat}">
+      <div class="entidade-card__top">
+        <div class="entidade-card__title">
+          <strong>${escapeHtml(e.empresa)}</strong>
+          ${e.categoria ? `<span class="entidade-cat entidade-cat--${cat}">${escapeHtml(e.categoria)}</span>` : ""}
+        </div>
+        ${e.tipo ? `<span class="entidade-tipo">${escapeHtml(e.tipo)}</span>` : ""}
+      </div>
+      ${rows.length ? `<div class="entidade-card__contact">${rows.join("")}</div>` : ""}
+      ${e.notas ? `<p class="entidade-card__notes">${escapeHtml(e.notas)}</p>` : ""}
+      <div class="entidade-card__actions">
+        <button class="icon-button" type="button" data-action="edit-entidade" data-id="${escapeAttr(e.id)}" title="Editar"><span data-icon="pencil"></span></button>
+        <button class="icon-button" type="button" data-action="delete-entidade" data-id="${escapeAttr(e.id)}" title="Eliminar"><span data-icon="trash"></span></button>
+      </div>
+    </article>`;
+}
+
+function openEntidadeModal(id) {
+  const e = id ? state.entidades.find((x) => String(x.id) === String(id)) : null;
+  const tipoOpts = ENTIDADE_TIPOS.map((t) => `<option value="${escapeAttr(t)}" ${e && e.tipo === t ? "selected" : ""}>${escapeHtml(t)}</option>`).join("");
+  const catOpts = ENTIDADE_CATEGORIAS.map((c) => `<option value="${escapeAttr(c)}" ${e && e.categoria === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("");
+  const body = `
+    <form data-form="entidade" class="modal-form">
+      <input type="hidden" name="id" value="${escapeAttr(e ? e.id : "")}">
+      <label class="field field--wide">Empresa / Entidade *
+        <input type="text" name="empresa" required value="${escapeAttr(e ? e.empresa : "")}" placeholder="Ex.: Oficinas XYZ, Lda">
+      </label>
+      <div class="field-row">
+        <label class="field">Categoria
+          <select name="categoria"><option value="">—</option>${catOpts}</select>
+        </label>
+        <label class="field">Tipo
+          <select name="tipo"><option value="">—</option>${tipoOpts}</select>
+        </label>
+      </div>
+      <label class="field field--wide">Nome do contacto
+        <input type="text" name="contactoNome" value="${escapeAttr(e ? e.contactoNome : "")}" placeholder="Pessoa de contacto">
+      </label>
+      <div class="field-row">
+        <label class="field">Telefone
+          <input type="text" name="telefone" value="${escapeAttr(e ? e.telefone : "")}" placeholder="2xx xxx xxx / 9xx xxx xxx">
+        </label>
+        <label class="field">Email
+          <input type="email" name="email" value="${escapeAttr(e ? e.email : "")}" placeholder="nome@dominio.pt">
+        </label>
+      </div>
+      <label class="field field--wide">Notas / Observações
+        <textarea name="notas" rows="3" placeholder="Especialidade, horário, condições, histórico…">${escapeHtml(e ? e.notas : "")}</textarea>
+      </label>
+      <div class="modal-form__actions">
+        <button type="button" class="ghost-button" data-action="close-modal">Cancelar</button>
+        <button type="submit" class="primary-button"><span data-icon="check"></span><span>Gravar entidade</span></button>
+      </div>
+    </form>`;
+  openModal(e ? "Editar entidade" : "Nova entidade", body);
+}
+
+async function handleSaveEntidade(form) {
+  const data = new FormData(form);
+  const empresa = String(data.get("empresa") || "").trim();
+  if (!empresa) { showToast("Indique o nome da empresa/entidade."); return; }
+  const id = String(data.get("id") || "").trim();
+  const existing = id ? state.entidades.find((x) => String(x.id) === id) : null;
+  const item = {
+    id: existing ? existing.id : `ENT-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    empresa,
+    tipo: String(data.get("tipo") || "").trim(),
+    categoria: String(data.get("categoria") || "").trim(),
+    contactoNome: String(data.get("contactoNome") || "").trim(),
+    telefone: String(data.get("telefone") || "").trim(),
+    email: String(data.get("email") || "").trim(),
+    notas: String(data.get("notas") || "").trim(),
+    createdAt: existing ? existing.createdAt : new Date().toISOString(),
+    createdBy: existing ? existing.createdBy : (remoteConfig.operator || "Utilizador")
+  };
+  if (existing) {
+    state.entidades = state.entidades.map((x) => (x === existing ? item : x));
+  } else {
+    state.entidades.push(item);
+  }
+  saveState();
+  closeModal();
+  showToast(existing ? "Entidade atualizada." : "Entidade criada.");
+  render();
+  await persistRemoteSafely(() => persistEntidadeRemote(item));
+}
+
+async function deleteEntidade(id) {
+  const e = state.entidades.find((x) => String(x.id) === String(id));
+  if (!e) return;
+  if (!window.confirm(`Eliminar a entidade "${e.empresa}"?`)) return;
+  state.entidades = state.entidades.filter((x) => x !== e);
+  saveState();
+  render();
+  await persistRemoteSafely(() => deleteEntidadeRemote(e.id));
 }
 
 // ── AUSÊNCIAS (calendário + cruzamento com manutenções) ───────────────────

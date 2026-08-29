@@ -962,6 +962,92 @@ td strong { font-weight: 600; font-size: 14px; }
   .dash-state-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* ---- Modal reutilizável (ARGOS) ---- */
+body.modal-open { overflow: hidden; }
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(17, 24, 39, 0.45);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 6vh 16px; overflow-y: auto;
+}
+.modal {
+  width: 100%; max-width: 560px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+  animation: modal-in 140ms ease-out;
+}
+.modal--wide { max-width: 840px; }
+@keyframes modal-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.modal__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid var(--line);
+}
+.modal__head h3 { margin: 0; font-size: 16px; color: var(--ink); }
+.modal__body { padding: 18px; }
+.modal-form { display: grid; gap: 12px; }
+.modal-form label.field { display: grid; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.modal-form input, .modal-form select, .modal-form textarea { font-size: 14px; font-weight: 400; color: var(--ink); }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field--wide { width: 100%; }
+.modal-form__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+@media (max-width: 560px) { .field-row { grid-template-columns: 1fr; } }
+
+/* ---- Entidades (mini-CRM) ---- */
+.panel-header__actions { flex-shrink: 0; }
+.entidade-toolbar {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid var(--line);
+}
+.entidade-search {
+  flex: 1 1 260px; min-width: 200px;
+  padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+}
+.chip-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-filter {
+  padding: 5px 11px; font-size: 12px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); color: var(--muted); cursor: pointer;
+  transition: border-color 120ms, background 120ms;
+}
+.chip-filter:hover { border-color: var(--line-strong); }
+.chip-filter.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.entidade-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px; padding: 16px 18px;
+}
+.entidade-card {
+  position: relative; display: flex; flex-direction: column; gap: 10px;
+  padding: 14px; border: 1px solid var(--line); border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius-sm); background: var(--surface); transition: box-shadow 150ms;
+}
+.entidade-card:hover { box-shadow: var(--shadow-sm); }
+.entidade-card__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.entidade-card__title { display: flex; flex-direction: column; gap: 6px; }
+.entidade-card__title strong { font-size: 15px; color: var(--ink); }
+.entidade-cat { align-self: flex-start; padding: 2px 8px; font-size: 11px; font-weight: 600; border-radius: 999px; background: var(--surface-soft); color: var(--muted); }
+.entidade-tipo { font-size: 11px; font-weight: 600; color: var(--muted); background: var(--surface-soft); padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.entidade-card__contact { display: grid; gap: 5px; font-size: 13px; }
+.entidade-card__contact div { display: flex; align-items: center; gap: 7px; color: var(--ink); }
+.entidade-card__contact .ico { font-size: 12px; width: 16px; text-align: center; }
+.entidade-card__contact a { color: var(--accent-strong); text-decoration: none; word-break: break-all; }
+.entidade-card__contact a:hover { text-decoration: underline; }
+.entidade-card__notes { font-size: 12.5px; color: var(--muted); margin: 0; padding-top: 8px; border-top: 1px dashed var(--line); }
+.entidade-card__actions { display: flex; gap: 4px; justify-content: flex-end; margin-top: auto; }
+.entidade-card--oficina { border-left-color: var(--accent); }
+.entidade-cat--oficina { background: #ccfbf1; color: var(--accent-strong); }
+.entidade-card--fornecedor { border-left-color: #2563eb; }
+.entidade-cat--fornecedor { background: #dbeafe; color: #1e40af; }
+.entidade-card--motorista { border-left-color: #7c3aed; }
+.entidade-cat--motorista { background: #ede9fe; color: #5b21b6; }
+.entidade-card--cliente { border-left-color: var(--green); }
+.entidade-cat--cliente { background: #dcfce7; color: var(--green); }
+.entidade-card--seguradora { border-left-color: var(--amber); }
+.entidade-cat--seguradora { background: #fef3c7; color: var(--amber); }
+.entidade-card--outro { border-left-color: var(--line-strong); }
+
 .fleet-date-cell { display: grid; gap: 5px; min-width: 148px; }
 
 .fleet-date-cell__foot {

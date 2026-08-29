@@ -426,6 +426,16 @@ document.addEventListener("click", async (event) => {
     saveState();
     render();
   }
+  if (action === "audit-type") {
+    state.filters.auditType = button.dataset.type || "";
+    saveState();
+    render();
+  }
+  if (action === "audit-period") {
+    state.filters.auditPeriod = button.dataset.period || "";
+    saveState();
+    render();
+  }
 });
 
 // Fechar modal com a tecla Escape.
@@ -618,6 +628,8 @@ function makeInitialState() {
       company: [],
       fleetSearch: "",
       auditSearch: "",
+      auditType: "",
+      auditPeriod: "",
       vistoriaType: "",
       vistoriaResult: "",
       ausenciaSort: "date",
@@ -2114,15 +2126,49 @@ function editMeetingEventFromReport(meetingId, eventId) {
   persistRemoteSafely(() => persistMeetingRemote(m));
 }
 
+// Navegação em 2 níveis: 5 áreas, cada uma com as suas secções (redesign ARGOS).
+const NAV_GROUPS = [
+  { id: "dashboard", label: "Dashboard", views: [["dashboard", "Dashboard"]] },
+  { id: "manutencao", label: "Manutenção", views: [["breakdowns", "Ocorrências"], ["new", "Nova ocorrência"], ["meeting", "Reuniões"]] },
+  { id: "frota", label: "Frota", views: [["fleet", "Viaturas"], ["vistoria", "Vistorias"]] },
+  { id: "entidades", label: "Entidades", views: [["entidades", "Entidades"], ["ausencias", "Ausências"]] },
+  { id: "analise", label: "Análise", views: [["audit", "Rastreio"]] }
+];
+
+function navGroupForView(view) {
+  return NAV_GROUPS.find((g) => g.views.some(([v]) => v === view)) || NAV_GROUPS[0];
+}
+
+function renderNav() {
+  const groupTabs = document.querySelector("#group-tabs");
+  const subNav = document.querySelector("#subview-nav");
+  if (!groupTabs) return;
+  const activeGroup = navGroupForView(state.currentView);
+  groupTabs.innerHTML = NAV_GROUPS.map((g) => {
+    const primary = g.views[0][0];
+    return `<button type="button" data-view="${escapeAttr(primary)}" class="${g === activeGroup ? "active" : ""}">${escapeHtml(g.label)}</button>`;
+  }).join("");
+
+  if (subNav) {
+    if (activeGroup.views.length > 1) {
+      subNav.innerHTML = activeGroup.views.map(([v, l]) =>
+        `<button type="button" data-view="${escapeAttr(v)}" class="${state.currentView === v ? "active" : ""}">${escapeHtml(l)}</button>`
+      ).join("");
+      subNav.hidden = false;
+    } else {
+      subNav.innerHTML = "";
+      subNav.hidden = true;
+    }
+  }
+}
+
 function render(focusSelector = "") {
   const metrics = getMetrics();
   document.querySelector("#data-line").textContent =
     `${state.breakdowns.length} avarias, ${state.fleet.length} viaturas, ${metrics.active} abertas`;
   updateSyncStatus(remoteStatus.label, remoteStatus.className, remoteStatus.ready);
 
-  document.querySelectorAll(".view-tabs button").forEach((button) => {
-    button.classList.toggle("active", button.dataset.view === state.currentView);
-  });
+  renderNav();
 
   const views = {
     dashboard: renderDashboard,
@@ -3501,6 +3547,21 @@ function renderAudit() {
         <div class="toolbar">
           <input type="search" data-filter="auditSearch" value="${escapeAttr(state.filters.auditSearch)}" placeholder="Pesquisar evento, equipamento ou nota">
         </div>
+        <div class="audit-filters">
+          <div class="chip-filters">
+            ${AUDIT_TYPES.map(([v, l]) => {
+              const active = (state.filters.auditType || "") === v;
+              const count = v ? state.audit.filter((e) => auditCategory(e) === v).length : state.audit.length;
+              return `<button type="button" class="chip-filter ${active ? "active" : ""}" data-action="audit-type" data-type="${escapeAttr(v)}">${escapeHtml(l)} (${count})</button>`;
+            }).join("")}
+          </div>
+          <div class="chip-filters">
+            ${AUDIT_PERIODS.map(([v, l]) => {
+              const active = (state.filters.auditPeriod || "") === v;
+              return `<button type="button" class="chip-filter chip-filter--period ${active ? "active" : ""}" data-action="audit-period" data-period="${escapeAttr(v)}">${escapeHtml(l)}</button>`;
+            }).join("")}
+          </div>
+        </div>
         <div class="timeline" style="padding: 16px; margin-top: 0;">
           ${audit.slice(0, 160).map((item) => `
             <article class="timeline-item">
@@ -3748,7 +3809,8 @@ function logFleetAudit(item, field, previous, next) {
     tachographAt: "Data de aferição tacógrafo",
     compressorReviewAt: "Data de revisão compressor",
     wheelHubReviewAt: "Data revisão cubos de roda",
-    revisionAt: "Data de revisão"
+    revisionAt: "Data de revisão",
+    preferredWorkshop: "Oficina preferencial"
   };
   const auditEvent = {
     id: `FROTA-${item.equipment}-${field}-${Date.now()}`,
@@ -4391,9 +4453,57 @@ function getFilteredFleet() {
   });
 }
 
+const AUDIT_TYPES = [
+  ["", "Todas"],
+  ["avaria", "Avarias"],
+  ["frota", "Frota"],
+  ["vistoria", "Vistorias"],
+  ["ausencia", "Ausências"]
+];
+
+const AUDIT_PERIODS = [
+  ["", "Sempre"],
+  ["today", "Hoje"],
+  ["week", "Esta semana"],
+  ["month", "Este mês"],
+  ["year", "Este ano"]
+];
+
+function auditCategory(ev) {
+  const id = String(ev.id || "");
+  const action = ev.action || "";
+  if (id.startsWith("FROTA-") || action.startsWith("Frota:")) return "frota";
+  if (id.startsWith("VISTORIA-") || action.startsWith("Vistoria:")) return "vistoria";
+  if (id.startsWith("AUS-") || /aus[êe]ncia/i.test(action)) return "ausencia";
+  return "avaria";
+}
+
+function auditInPeriod(ev, period) {
+  if (!period) return true;
+  const at = (ev.at || "").slice(0, 10);
+  if (!at) return false;
+  const today = todayISO();
+  if (period === "today") return at === today;
+  if (period === "year") return at.slice(0, 4) === today.slice(0, 4);
+  if (period === "month") return at.slice(0, 7) === today.slice(0, 7);
+  if (period === "week") {
+    const d = new Date(`${today}T00:00:00`);
+    const dow = (d.getDay() + 6) % 7; // 0 = segunda-feira
+    const monday = new Date(d);
+    monday.setDate(d.getDate() - dow);
+    const mondayISO = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
+    return at >= mondayISO && at <= today;
+  }
+  return true;
+}
+
 function getFilteredAudit() {
   const search = normalizeText(state.filters.auditSearch);
+  const type = state.filters.auditType || "";
+  const period = state.filters.auditPeriod || "";
   return state.audit.filter((item) => {
+    if (type && auditCategory(item) !== type) return false;
+    if (period && !auditInPeriod(item, period)) return false;
     const haystack = normalizeText(`${item.breakdownId} ${item.equipment} ${item.plate} ${item.action} ${item.note}`);
     return !search || haystack.includes(search);
   });

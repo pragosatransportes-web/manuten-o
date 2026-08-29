@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Gestão de Avarias</title>
-    <link rel="stylesheet" href="styles.css?v=45">
+    <link rel="stylesheet" href="styles.css?v=46">
   </head>
   <body>
     <div class="app-shell">
@@ -36,17 +36,8 @@
         </div>
       </header>
 
-      <nav class="view-tabs" aria-label="Vistas principais">
-        <button type="button" data-view="dashboard">Dashboard</button>
-        <button type="button" data-view="meeting">Reunião</button>
-        <button type="button" data-view="breakdowns">Avarias</button>
-        <button type="button" data-view="new">Nova avaria</button>
-        <button type="button" data-view="fleet">Frota</button>
-        <button type="button" data-view="vistoria">Vistoria</button>
-        <button type="button" data-view="entidades">Entidades</button>
-        <button type="button" data-view="ausencias">Ausências</button>
-        <button type="button" data-view="audit">Rastreio</button>
-      </nav>
+      <nav class="view-tabs" id="group-tabs" aria-label="Áreas"></nav>
+      <nav class="subview-nav" id="subview-nav" aria-label="Secções" hidden></nav>
 
       <main id="main" tabindex="-1"></main>
     </div>
@@ -55,11 +46,11 @@
     <div id="meeting-dock"></div>
     <div id="modal-root"></div>
 
-    <script src="config.js?v=45"></script>
+    <script src="config.js?v=46"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="seed-data.js?v=45"></script>
-    <script src="trello.js?v=45"></script>
-    <script src="app.js?v=45"></script>
+    <script src="seed-data.js?v=46"></script>
+    <script src="trello.js?v=46"></script>
+    <script src="app.js?v=46"></script>
   </body>
 </html>

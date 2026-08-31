@@ -1114,6 +1114,7 @@ body.modal-open { overflow: hidden; }
 .occ-form input[readonly] { background: var(--surface-soft); color: var(--muted); cursor: not-allowed; }
 .occ-linknote { font-size: 12.5px; color: var(--accent-strong); background: var(--accent-pale); padding: 8px 10px; border-radius: var(--radius-sm); margin: 4px 0 0; }
 .occ-hint { font-weight: 400; font-size: 11px; color: var(--muted-light); }
+.admin-login__err { color: var(--red); font-size: 12px; margin: 0; }
 .occ-form select[multiple] { min-height: 150px; padding: 4px; }
 
 /* ---- Definições: taxonomia de tipos de avaria (Fatia 3) ---- */

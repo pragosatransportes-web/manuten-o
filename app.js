@@ -191,15 +191,40 @@ async function toggleAdminMode() {
     showToast("Palavra-passe de administrador não configurada.");
     return;
   }
-  const entry = window.prompt("Palavra-passe de administrador:");
-  if (entry == null) return;
+  openAdminPasswordModal();
+}
+
+function openAdminPasswordModal() {
+  const body = `
+    <form data-form="admin-login" class="modal-form">
+      <label class="field field--wide">Palavra-passe de administrador
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <p class="admin-login__err" hidden>Palavra-passe incorreta.</p>
+      <div class="modal-form__actions">
+        <button type="button" class="ghost-button" data-action="close-modal">Cancelar</button>
+        <button type="submit" class="primary-button">Entrar</button>
+      </div>
+    </form>`;
+  openModal("Modo Administrador", body);
+}
+
+async function handleAdminLogin(form) {
+  const data = new FormData(form);
+  const entry = String(data.get("password") || "");
+  const expected = String(remoteConfig.adminPasswordHash || "").toLowerCase();
   const hash = await sha256Hex(entry);
   if (hash === expected) {
     isAdmin = true;
     try { sessionStorage.setItem(ADMIN_STORAGE_KEY, "1"); } catch (e) {}
+    closeModal();
     showToast("Modo Administrador ativado.");
     render();
   } else {
+    const err = form.querySelector(".admin-login__err");
+    if (err) err.hidden = false;
+    const inp = form.querySelector('input[name="password"]');
+    if (inp) { inp.value = ""; inp.focus(); }
     showToast("Palavra-passe incorreta.");
   }
 }
@@ -625,6 +650,10 @@ document.addEventListener("submit", async (event) => {
   if (form.dataset.form === "fault-type") {
     event.preventDefault();
     await handleSaveFaultType(form);
+  }
+  if (form.dataset.form === "admin-login") {
+    event.preventDefault();
+    await handleAdminLogin(form);
   }
 });
 

@@ -1106,6 +1106,20 @@ body.modal-open { overflow: hidden; }
 .modal-form label.field--check input { width: auto; }
 .occ-form input[readonly] { background: var(--surface-soft); color: var(--muted); cursor: not-allowed; }
 .occ-linknote { font-size: 12.5px; color: var(--accent-strong); background: var(--accent-pale); padding: 8px 10px; border-radius: var(--radius-sm); margin: 4px 0 0; }
+.occ-hint { font-weight: 400; font-size: 11px; color: var(--muted-light); }
+.occ-form select[multiple] { min-height: 150px; padding: 4px; }
+
+/* ---- Definições: taxonomia de tipos de avaria (Fatia 3) ---- */
+.def-list { padding: 8px 18px 18px; display: grid; gap: 16px; }
+.def-group h3 { margin: 8px 0; font-size: 12px; color: var(--accent-strong); text-transform: uppercase; letter-spacing: 0.4px; }
+.def-rows { display: grid; gap: 6px; }
+.def-row { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.def-row__main strong { display: block; font-size: 13px; color: var(--ink); }
+.def-row__main span { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.def-row__prio { display: flex; flex-direction: column; gap: 2px; font-size: 10px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.def-row__prio select { font-size: 12px; font-weight: 400; padding: 4px 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); }
+.def-row__actions { display: flex; gap: 2px; }
+@media (max-width: 560px) { .def-row { grid-template-columns: 1fr; align-items: start; } }
 
 .fleet-date-cell { display: grid; gap: 5px; min-width: 148px; }
 

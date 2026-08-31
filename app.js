@@ -166,7 +166,7 @@ try { isAdmin = sessionStorage.getItem(ADMIN_STORAGE_KEY) === "1"; } catch (e) {
 // Só as ações de ELIMINAR ficam reservadas ao Administrador.
 // Tudo o resto (atualizar estados, concluir, editar, acrescentar) é livre.
 const ADMIN_ACTIONS = new Set([
-  "delete-fleet", "delete-ausencia", "delete-vistoria", "delete-entidade",
+  "delete-fleet", "delete-ausencia", "delete-vistoria", "delete-entidade", "delete-fault-type",
   "meeting-event-delete", "dock-item-delete", "delete-meeting"
 ]);
 const ADMIN_FORMS = new Set();
@@ -460,6 +460,20 @@ document.addEventListener("click", async (event) => {
     saveState();
     render();
   }
+  if (action === "definicoes-vt") {
+    state.definicoesVehicleType = button.dataset.vt || "Trator";
+    saveState();
+    render();
+  }
+  if (action === "new-fault-type") {
+    openFaultTypeModal("");
+  }
+  if (action === "edit-fault-type") {
+    openFaultTypeModal(button.dataset.id);
+  }
+  if (action === "delete-fault-type") {
+    await deleteFaultType(button.dataset.id);
+  }
 });
 
 // Fechar modal com a tecla Escape.
@@ -499,6 +513,9 @@ document.addEventListener("change", async (event) => {
   }
   if (target.dataset.fleetWorkshop) {
     await updateFleetWorkshop(target.dataset.equipment, target.value);
+  }
+  if (target.dataset.faultPriority) {
+    await updateFaultTypePriority(target.dataset.id, target.value);
   }
   if (target.id === "new-description-filter") {
     repopulatePlateOptions(target.value);
@@ -587,6 +604,10 @@ document.addEventListener("submit", async (event) => {
     event.preventDefault();
     await handleSaveEntidade(form);
   }
+  if (form.dataset.form === "fault-type") {
+    event.preventDefault();
+    await handleSaveFaultType(form);
+  }
 });
 
 function loadState() {
@@ -639,6 +660,8 @@ function makeInitialState() {
     vistorias: [],
     ausencias: [],
     entidades: [],
+    faultTypes: [],
+    definicoesVehicleType: "Trator",
     fleetView: "cards",
     ausenciaMonth: currentMonthISO(),
     breakdowns,
@@ -782,7 +805,7 @@ function updateSyncStatus(label, className, ready) {
 }
 
 async function loadRemoteState() {
-  const [fleetResult, breakdownsResult, snapshotsResult, auditResult, vistoriasResult, meetingsResult, ausenciasResult, entidadesResult] = await Promise.all([
+  const [fleetResult, breakdownsResult, snapshotsResult, auditResult, vistoriasResult, meetingsResult, ausenciasResult, entidadesResult, faultTypesResult] = await Promise.all([
     remoteClient.from("avarias_fleet").select("*").order("equipment", { ascending: true }),
     remoteClient.from("avarias_breakdowns").select("*").order("updated_at", { ascending: false }),
     remoteClient.from("avarias_snapshots").select("*").order("date", { ascending: true }),
@@ -790,7 +813,8 @@ async function loadRemoteState() {
     remoteClient.from("avarias_vistorias").select("*").order("date", { ascending: false }),
     remoteClient.from("avarias_reunioes").select("*").order("started_at", { ascending: false }),
     remoteClient.from("avarias_ausencias").select("*").order("start_at", { ascending: true }),
-    remoteClient.from("avarias_entidades").select("*").order("empresa", { ascending: true })
+    remoteClient.from("avarias_entidades").select("*").order("empresa", { ascending: true }),
+    remoteClient.from("avarias_tipos_avaria").select("*").order("position", { ascending: true })
   ]);
 
   [fleetResult, breakdownsResult, snapshotsResult, auditResult].forEach((result) => {
@@ -847,6 +871,7 @@ async function loadRemoteState() {
     meetings: meetingsResult.error ? (state.meetings || []) : meetingsResult.data.map(dbMeetingToApp),
     ausencias: ausenciasResult.error ? (state.ausencias || []) : ausenciasResult.data.map(dbAusenciaToApp),
     entidades: entidadesResult.error ? (state.entidades || []) : entidadesResult.data.map(dbEntidadeToApp),
+    faultTypes: faultTypesResult.error ? (state.faultTypes || []) : faultTypesResult.data.map(dbFaultTypeToApp),
     breakdowns,
     snapshots: snapshotsResult.data.map(dbSnapshotToApp),
     audit: auditResult.data.length ? auditResult.data.map(dbAuditToApp) : buildAudit(breakdowns),
@@ -899,6 +924,9 @@ function subscribeRemoteChanges() {
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "avarias_entidades" }, (payload) => {
       applyRemoteRow(payload, "entidades", dbEntidadeToApp);
+    })
+    .on("postgres_changes", { event: "*", schema: "public", table: "avarias_tipos_avaria" }, (payload) => {
+      applyRemoteRow(payload, "faultTypes", dbFaultTypeToApp);
     })
     .subscribe();
 }
@@ -1081,6 +1109,48 @@ function dbEntidadeToApp(row) {
     notas: row.notas || "",
     createdAt: row.created_at || "",
     createdBy: row.created_by || ""
+  };
+}
+
+async function persistFaultTypeRemote(ft) {
+  if (!remoteStatus.ready || !remoteClient || !ft) return;
+  updateSyncStatus("A guardar tipo de avaria", "syncing", true);
+  const { error } = await remoteClient
+    .from("avarias_tipos_avaria")
+    .upsert(appFaultTypeToDb(ft), { onConflict: "id" });
+  if (error) throw error;
+  updateSyncStatus("Partilhado em tempo real", "remote", true);
+}
+
+async function deleteFaultTypeRemote(id) {
+  if (!remoteStatus.ready || !remoteClient) return;
+  const { error } = await remoteClient.from("avarias_tipos_avaria").delete().eq("id", String(id));
+  if (error) throw error;
+}
+
+function appFaultTypeToDb(item) {
+  return {
+    id: String(item.id),
+    vehicle_type: item.vehicleType || null,
+    grupo: item.grupo || null,
+    nome: item.nome || "",
+    hint: item.hint || null,
+    suggested_priority: item.suggestedPriority || null,
+    position: Number.isFinite(item.position) ? item.position : null,
+    active: item.active !== false
+  };
+}
+
+function dbFaultTypeToApp(row) {
+  return {
+    id: String(row.id),
+    vehicleType: row.vehicle_type || "",
+    grupo: row.grupo || "",
+    nome: row.nome || "",
+    hint: row.hint || "",
+    suggestedPriority: row.suggested_priority || "",
+    position: row.position ?? 0,
+    active: row.active !== false
   };
 }
 
@@ -2211,7 +2281,7 @@ function editMeetingEventFromReport(meetingId, eventId) {
 const NAV_GROUPS = [
   { id: "dashboard", label: "Dashboard", views: [["dashboard", "Dashboard"]] },
   { id: "manutencao", label: "Manutenção", views: [["breakdowns", "Ocorrências"], ["new", "Nova ocorrência"], ["meeting", "Reuniões"]] },
-  { id: "frota", label: "Frota", views: [["fleet", "Viaturas"], ["vistoria", "Vistorias"]] },
+  { id: "frota", label: "Frota", views: [["fleet", "Viaturas"], ["vistoria", "Vistorias"], ["definicoes", "Definições"]] },
   { id: "entidades", label: "Entidades", views: [["entidades", "Entidades"], ["ausencias", "Ausências"]] },
   { id: "analise", label: "Análise", views: [["audit", "Rastreio"]] }
 ];
@@ -2258,6 +2328,7 @@ function render(focusSelector = "") {
     new: renderNewBreakdown,
     fleet: renderFleet,
     vistoria: renderVistoria,
+    definicoes: renderDefinicoes,
     entidades: renderEntidades,
     ausencias: renderAusencias,
     audit: renderAudit
@@ -3251,22 +3322,20 @@ function openOccurrenceModal() {
 
       <div class="occ-section">
         <p class="occ-section__title">4 · Classificação e detalhes</p>
+        <label class="field field--wide">Tipo de avaria <span class="occ-hint">(escolha um ou vários — filtrado pela viatura)</span>
+          <select name="type" id="occ-type" multiple size="7"><option value="" disabled>Selecione a matrícula primeiro</option></select>
+        </label>
         <div class="field-row">
-          <label class="field">Tipo de avaria
-            <select name="type"><option value="">—</option>${options.types.map((t) => `<option value="${escapeAttr(t)}">${escapeHtml(t)}</option>`).join("")}</select>
-          </label>
           <label class="field">Km
             <input type="number" name="km" min="0" placeholder="Quilómetros">
           </label>
-        </div>
-        <div class="field-row">
           <label class="field">Registado por
             <input name="registeredBy" value="${escapeAttr(remoteConfig.operator || "")}">
           </label>
-          <label class="field">Resp. logística
-            <input name="logisticsResp" placeholder="Ex.: Ana Fialho">
-          </label>
         </div>
+        <label class="field field--wide">Resp. logística
+          <input name="logisticsResp" placeholder="Ex.: Ana Fialho">
+        </label>
         <label class="field field--wide">Descrição *
           <textarea name="description" rows="3" required>${escapeHtml(descPrefill)}</textarea>
         </label>
@@ -3301,11 +3370,29 @@ function wireOccurrenceModal() {
   const workshopFields = root.querySelector("#occ-workshop-fields");
   const workshopType = root.querySelector("#occ-workshoptype");
   const workshopSel = root.querySelector("#occ-workshop");
+  const typeSel = root.querySelector("#occ-type");
+  const priorityField = root.querySelector('select[name="priority"]');
 
   const populateRecurrent = () => {
     if (!recurrentOf) return;
     const list = occurrencesForPlate(plate.value);
     recurrentOf.innerHTML = `<option value="">—</option>` + list.map((o) => `<option value="${escapeAttr(o.number)}">${escapeHtml(o.label)}</option>`).join("");
+  };
+  const populateTypes = () => {
+    if (!typeSel) return;
+    typeSel.innerHTML = plate.value
+      ? faultTypeOptionsHtml(vehicleBucketForPlate(plate.value))
+      : `<option value="" disabled>Selecione a matrícula primeiro</option>`;
+  };
+  const prefillPriorityFromTypes = () => {
+    if (!typeSel || !priorityField || priorityField.value) return; // não sobrepõe escolha manual
+    const rank = { P1: 1, P2: 2, P3: 3, P4: 4 };
+    let best = "";
+    for (const opt of typeSel.selectedOptions) {
+      const p = opt.dataset.prio;
+      if (p && (!best || rank[p] < rank[best])) best = p;
+    }
+    if (best) priorityField.value = best;
   };
   const fillFromPlate = () => {
     const f = findFleetByPlate(plate.value);
@@ -3313,6 +3400,7 @@ function wireOccurrenceModal() {
     if (driver) driver.value = f?.driver || "";
     if (vtype) vtype.value = f?.description || "";
     populateRecurrent();
+    populateTypes();
   };
   const toggleRecurrent = () => {
     if (recurrentWrap) recurrentWrap.hidden = !recurrentChk.checked;
@@ -3331,6 +3419,7 @@ function wireOccurrenceModal() {
   if (recurrentChk) recurrentChk.addEventListener("change", toggleRecurrent);
   if (onsite) onsite.addEventListener("change", toggleOnSite);
   if (workshopType) workshopType.addEventListener("change", filterOficinas);
+  if (typeSel) typeSel.addEventListener("change", prefillPriorityFromTypes);
   if (plate && plate.value) fillFromPlate();
 }
 
@@ -4053,6 +4142,8 @@ async function handleNewBreakdown(form) {
   const registeredBy = String(data.get("registeredBy") || remoteConfig.operator || "").trim();
   const logisticsResp = String(data.get("logisticsResp") || "").trim();
   const recurrentOf = String(data.get("recurrentOf") || "").trim();
+  const typeSelected = data.getAll("type").map((v) => String(v).trim()).filter(Boolean);
+  const typeStr = typeSelected.length ? typeSelected.join("; ") : "Outro";
   const fromModal = isModalOpen();
   const id = generateId();
   const wasRemoteReady = remoteStatus.ready;
@@ -4079,7 +4170,7 @@ async function handleNewBreakdown(form) {
     registeredBy,
     logisticsResp,
     recurrentOf,
-    type: String(data.get("type") || "Outro"),
+    type: typeStr,
     status: String(data.get("status") || "Parado"),
     situation: String(data.get("situation") || "").trim(),
     reportedAt,
@@ -4397,6 +4488,186 @@ async function deleteEntidade(id) {
   saveState();
   render();
   await persistRemoteSafely(() => deleteEntidadeRemote(e.id));
+}
+
+// ── DEFINIÇÕES: taxonomia de tipos de avaria por tipo de viatura ───────────
+
+const DEFINICOES_VEHICLE_TYPES = ["Trator", "Reboque"];
+
+function faultTypesFor(vehicleType) {
+  return state.faultTypes
+    .filter((t) => t.active !== false && normalizeText(t.vehicleType) === normalizeText(vehicleType))
+    .sort((a, b) => (a.position - b.position) || (a.grupo || "").localeCompare(b.grupo || "", "pt") || (a.nome || "").localeCompare(b.nome || "", "pt"));
+}
+
+function faultTypeGroups(vehicleType) {
+  const map = new Map();
+  for (const t of faultTypesFor(vehicleType)) {
+    if (!map.has(t.grupo)) map.set(t.grupo, []);
+    map.get(t.grupo).push(t);
+  }
+  return map;
+}
+
+function vehicleBucketForPlate(plate) {
+  const f = findFleetByPlate(plate);
+  return f && isTratorFleet(f) ? "Trator" : "Reboque";
+}
+
+function faultTypeOptionsHtml(vehicleType) {
+  const groups = faultTypeGroups(vehicleType);
+  if (!groups.size) {
+    return `<option value="" disabled>Sem tipos definidos para ${escapeHtml(vehicleType)} — configure em Frota › Definições</option>` +
+      options.types.map((t) => `<option value="${escapeAttr(t)}">${escapeHtml(t)}</option>`).join("");
+  }
+  let html = "";
+  for (const [grupo, items] of groups) {
+    html += `<optgroup label="${escapeAttr(grupo || "Outros")}">` +
+      items.map((t) => `<option value="${escapeAttr(t.nome)}" data-prio="${escapeAttr(t.suggestedPriority || "")}">${escapeHtml(t.nome)}${t.hint ? ` — ${escapeHtml(t.hint)}` : ""}</option>`).join("") +
+      `</optgroup>`;
+  }
+  return html;
+}
+
+function renderDefinicoes() {
+  const vt = DEFINICOES_VEHICLE_TYPES.includes(state.definicoesVehicleType) ? state.definicoesVehicleType : "Trator";
+  const groups = faultTypeGroups(vt);
+  const total = faultTypesFor(vt).length;
+  const tabs = DEFINICOES_VEHICLE_TYPES.map((t) => {
+    const count = faultTypesFor(t).length;
+    return `<button type="button" class="chip-filter ${vt === t ? "active" : ""}" data-action="definicoes-vt" data-vt="${escapeAttr(t)}">${escapeHtml(t)} (${count})</button>`;
+  }).join("");
+
+  let groupsHtml = "";
+  if (groups.size) {
+    for (const [grupo, items] of groups) {
+      groupsHtml += `
+        <div class="def-group">
+          <h3>${escapeHtml(grupo || "(sem grupo)")}</h3>
+          <div class="def-rows">${items.map(faultTypeRow).join("")}</div>
+        </div>`;
+    }
+  } else {
+    groupsHtml = `<p class="empty-state">Sem tipos de avaria para ${escapeHtml(vt)}. Adicione o primeiro com "Novo tipo".</p>`;
+  }
+
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Definições</p>
+          <h2>Tipos de avaria & prioridades</h2>
+          <p>${total} tipos para ${escapeHtml(vt)} — geríveis sem sair da app.</p>
+        </div>
+        <div class="panel-header__actions">
+          <button class="primary-button" type="button" data-action="new-fault-type"><span data-icon="plus"></span><span>Novo tipo</span></button>
+        </div>
+      </div>
+      <div class="entidade-toolbar">
+        <div class="chip-filters">${tabs}</div>
+      </div>
+      <div class="def-list">${groupsHtml}</div>
+    </section>`;
+}
+
+function faultTypeRow(t) {
+  const prioOpts = [["", "—"], ...PRIORITIES].map(([p]) =>
+    `<option value="${escapeAttr(p)}" ${t.suggestedPriority === p ? "selected" : ""}>${escapeHtml(p || "—")}</option>`).join("");
+  return `
+    <div class="def-row">
+      <div class="def-row__main">
+        <strong>${escapeHtml(t.nome)}</strong>
+        ${t.hint ? `<span>${escapeHtml(t.hint)}</span>` : ""}
+      </div>
+      <label class="def-row__prio">Prioridade
+        <select data-fault-priority="true" data-id="${escapeAttr(t.id)}">${prioOpts}</select>
+      </label>
+      <div class="def-row__actions">
+        <button class="icon-button" type="button" data-action="edit-fault-type" data-id="${escapeAttr(t.id)}" title="Editar"><span data-icon="pencil"></span></button>
+        <button class="icon-button" type="button" data-action="delete-fault-type" data-id="${escapeAttr(t.id)}" title="Eliminar"><span data-icon="trash"></span></button>
+      </div>
+    </div>`;
+}
+
+function openFaultTypeModal(id) {
+  const t = id ? state.faultTypes.find((x) => String(x.id) === String(id)) : null;
+  const vtOpts = DEFINICOES_VEHICLE_TYPES.map((v) => {
+    const sel = t ? t.vehicleType === v : state.definicoesVehicleType === v;
+    return `<option value="${escapeAttr(v)}" ${sel ? "selected" : ""}>${escapeHtml(v)}</option>`;
+  }).join("");
+  const grupos = [...new Set(state.faultTypes.map((x) => x.grupo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"));
+  const body = `
+    <form data-form="fault-type" class="modal-form">
+      <input type="hidden" name="id" value="${escapeAttr(t ? t.id : "")}">
+      <div class="field-row">
+        <label class="field">Tipo de viatura *
+          <select name="vehicleType" required>${vtOpts}</select>
+        </label>
+        <label class="field">Prioridade sugerida
+          <select name="suggestedPriority"><option value="">—</option>${PRIORITIES.map(([p, l]) => `<option value="${escapeAttr(p)}" ${t && t.suggestedPriority === p ? "selected" : ""}>${escapeHtml(p)} · ${escapeHtml(l)}</option>`).join("")}</select>
+        </label>
+      </div>
+      <label class="field field--wide">Grupo
+        <input name="grupo" list="def-grupos" value="${escapeAttr(t ? t.grupo : "")}" placeholder="Ex.: Travagem">
+        <datalist id="def-grupos">${grupos.map((g) => `<option value="${escapeAttr(g)}"></option>`).join("")}</datalist>
+      </label>
+      <label class="field field--wide">Tipo de avaria *
+        <input name="nome" required value="${escapeAttr(t ? t.nome : "")}" placeholder="Ex.: Fricção">
+      </label>
+      <label class="field field--wide">Exemplos / notas
+        <input name="hint" value="${escapeAttr(t ? t.hint : "")}" placeholder="Ex.: pastilhas, discos, maxilas, tambores">
+      </label>
+      <div class="modal-form__actions">
+        <button type="button" class="ghost-button" data-action="close-modal">Cancelar</button>
+        <button type="submit" class="primary-button"><span data-icon="check"></span><span>Gravar tipo</span></button>
+      </div>
+    </form>`;
+  openModal(t ? "Editar tipo de avaria" : "Novo tipo de avaria", body);
+}
+
+async function handleSaveFaultType(form) {
+  const data = new FormData(form);
+  const nome = String(data.get("nome") || "").trim();
+  if (!nome) { showToast("Indique o tipo de avaria."); return; }
+  const id = String(data.get("id") || "").trim();
+  const existing = id ? state.faultTypes.find((x) => String(x.id) === id) : null;
+  const item = {
+    id: existing ? existing.id : `FT-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    vehicleType: String(data.get("vehicleType") || "Trator"),
+    grupo: String(data.get("grupo") || "").trim(),
+    nome,
+    hint: String(data.get("hint") || "").trim(),
+    suggestedPriority: String(data.get("suggestedPriority") || ""),
+    position: existing ? existing.position : (state.faultTypes.length + 1) * 10,
+    active: true
+  };
+  if (existing) state.faultTypes = state.faultTypes.map((x) => (x === existing ? item : x));
+  else state.faultTypes.push(item);
+  state.definicoesVehicleType = item.vehicleType;
+  saveState();
+  closeModal();
+  showToast(existing ? "Tipo atualizado." : "Tipo criado.");
+  render();
+  await persistRemoteSafely(() => persistFaultTypeRemote(item));
+}
+
+async function updateFaultTypePriority(id, value) {
+  const t = state.faultTypes.find((x) => String(x.id) === String(id));
+  if (!t) return;
+  t.suggestedPriority = value || "";
+  saveState();
+  showToast("Prioridade sugerida guardada.");
+  await persistRemoteSafely(() => persistFaultTypeRemote(t));
+}
+
+async function deleteFaultType(id) {
+  const t = state.faultTypes.find((x) => String(x.id) === String(id));
+  if (!t) return;
+  if (!window.confirm(`Eliminar o tipo de avaria "${t.nome}"?`)) return;
+  state.faultTypes = state.faultTypes.filter((x) => x !== t);
+  saveState();
+  render();
+  await persistRemoteSafely(() => deleteFaultTypeRemote(t.id));
 }
 
 // ── AUSÊNCIAS (calendário + cruzamento com manutenções) ───────────────────

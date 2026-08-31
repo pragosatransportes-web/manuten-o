@@ -1098,6 +1098,15 @@ body.modal-open { overflow: hidden; }
 .prio-badge--p3 { background: #dbeafe; color: #1e40af; }
 .prio-badge--p4 { background: var(--surface-soft); color: var(--muted); }
 
+/* ---- Formulário modal de ocorrência (Fatia 2) ---- */
+.occ-section { padding: 12px 0; border-top: 1px solid var(--line); }
+.occ-section:first-child { border-top: none; padding-top: 0; }
+.occ-section__title { margin: 0 0 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent-strong); }
+.modal-form label.field--check { flex-direction: row; align-items: center; gap: 8px; display: flex; font-weight: 500; color: var(--ink); }
+.modal-form label.field--check input { width: auto; }
+.occ-form input[readonly] { background: var(--surface-soft); color: var(--muted); cursor: not-allowed; }
+.occ-linknote { font-size: 12.5px; color: var(--accent-strong); background: var(--accent-pale); padding: 8px 10px; border-radius: var(--radius-sm); margin: 4px 0 0; }
+
 .fleet-date-cell { display: grid; gap: 5px; min-width: 148px; }
 
 .fleet-date-cell__foot {

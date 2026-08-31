@@ -13,6 +13,7 @@ let remoteFleetHasDriver = true;
 let remoteFleetHasRevision = true;
 let remoteFleetHasWorkshop = true;
 let remoteBreakdownHasOccurrence = true;
+let remoteBreakdownHasDetails = true;
 
 // Tipos de ausência de motorista (calendário de ausências, migração 003).
 const ABSENCE_TYPES = ["Férias", "Baixa médica"];
@@ -249,8 +250,9 @@ document.addEventListener("click", async (event) => {
 
   const view = button.dataset.view;
   if (view) {
-    // Abandonar uma ligação vistoria→avaria pendente se sair sem registar a avaria.
-    if (view !== "new") state.avariaFromVistoria = null;
+    // "Nova ocorrência" abre agora em janela modal (não é uma vista).
+    if (view === "new") { state.avariaFromVistoria = null; openOccurrenceModal(); return; }
+    state.avariaFromVistoria = null;
     // Ao clicar no separador Reunião: workspace se houver reunião a decorrer, senão o ecrã inicial.
     if (view === "meeting") state.meetingView = getActiveMeeting() ? "work" : "home";
     state.currentView = view;
@@ -691,6 +693,13 @@ function normalizeBreakdownFields(item) {
     interventionType: item.interventionType || "Corretiva",
     occurrenceNumber: item.occurrenceNumber || "",
     priority: item.priority || "",
+    communicatedAt: item.communicatedAt || "",
+    onSite: !!item.onSite,
+    km: item.km ?? "",
+    registeredBy: item.registeredBy || "",
+    logisticsResp: item.logisticsResp || "",
+    recurrentOf: item.recurrentOf || "",
+    expectedEntryAt: item.expectedEntryAt || null,
     attachments: normalizeAttachments(item.attachments)
   };
 }
@@ -798,6 +807,7 @@ async function loadRemoteState() {
   }
   if (breakdownsResult.data.length) {
     remoteBreakdownHasOccurrence = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "occurrence_number");
+    remoteBreakdownHasDetails = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "communicated_at");
   }
 
   if (!fleetResult.data.length && !breakdownsResult.data.length) {
@@ -920,6 +930,16 @@ function applyRemoteRow(payload, collection, mapper) {
       item.occurrenceNumber = prev.occurrenceNumber || item.occurrenceNumber;
       item.priority = prev.priority || item.priority;
       item.interventionType = prev.interventionType || item.interventionType;
+    }
+    if (collection === "breakdowns" && !remoteBreakdownHasDetails) {
+      const prev = state.breakdowns[index];
+      item.communicatedAt = prev.communicatedAt || item.communicatedAt;
+      item.onSite = prev.onSite || item.onSite;
+      item.km = prev.km || item.km;
+      item.registeredBy = prev.registeredBy || item.registeredBy;
+      item.logisticsResp = prev.logisticsResp || item.logisticsResp;
+      item.recurrentOf = prev.recurrentOf || item.recurrentOf;
+      item.expectedEntryAt = prev.expectedEntryAt || item.expectedEntryAt;
     }
     state[collection][index] = item;
   } else {
@@ -1684,9 +1704,8 @@ function startAvariaFromVistoria(vistoriaId, section, item) {
     note: entry?.note || "",
     state: entry?.state || ""
   };
-  state.currentView = "new";
   saveState();
-  render();
+  openOccurrenceModal();
 }
 
 function getVistoriaBreakdowns(vistoriaId) {
@@ -1795,6 +1814,16 @@ function appBreakdownToDb(item) {
     row.occurrence_number = item.occurrenceNumber || null;
     row.priority = item.priority || null;
   }
+  // Detalhes da ocorrência (Fatia 2) — só envia quando as colunas já existem (migração 007).
+  if (remoteBreakdownHasDetails) {
+    row.communicated_at = item.communicatedAt || null;
+    row.on_site = !!item.onSite;
+    row.km = item.km || null;
+    row.registered_by = item.registeredBy || null;
+    row.logistics_resp = item.logisticsResp || null;
+    row.recurrent_of = item.recurrentOf || null;
+    row.expected_entry_at = item.expectedEntryAt || null;
+  }
   // Ligação à vistoria de origem — só envia as colunas quando existe ligação,
   // para não exigir as colunas nas avarias antigas (sem ligação).
   if (item.vistoriaId) {
@@ -1829,6 +1858,13 @@ function dbBreakdownToApp(row) {
     interventionType: row.intervention_type || "Corretiva",
     occurrenceNumber: row.occurrence_number || "",
     priority: row.priority || "",
+    communicatedAt: row.communicated_at || "",
+    onSite: !!row.on_site,
+    km: (row.km ?? "") === null ? "" : (row.km ?? ""),
+    registeredBy: row.registered_by || "",
+    logisticsResp: row.logistics_resp || "",
+    recurrentOf: row.recurrent_of || "",
+    expectedEntryAt: row.expected_entry_at || null,
     vistoriaId: row.vistoria_id || "",
     vistoriaItem: row.vistoria_item || "",
     vistoriaSection: row.vistoria_section || "",
@@ -2752,9 +2788,16 @@ function renderDetail(breakdown) {
     </div>
 
     <dl class="mini-grid">
-      <div><dt>Data avaria</dt><dd>${formatDate(breakdown.reportedAt)}</dd></div>
+      <div><dt>Abertura</dt><dd>${formatDate(breakdown.reportedAt)}</dd></div>
+      <div><dt>Comunicação</dt><dd>${breakdown.communicatedAt ? formatDate(breakdown.communicatedAt) : "-"}</dd></div>
+      <div><dt>No terreno</dt><dd>${breakdown.onSite ? "Sim" : "Não"}</dd></div>
+      <div><dt>Prev. entrada</dt><dd>${breakdown.expectedEntryAt ? formatDate(breakdown.expectedEntryAt) : "-"}</dd></div>
       <div><dt>Prev. saída</dt><dd>${formatDate(breakdown.expectedExitAt)}</dd></div>
       <div><dt>Entrada oficina</dt><dd>${formatDate(breakdown.workshopEntryAt)}</dd></div>
+      <div><dt>Km</dt><dd>${breakdown.km ? escapeHtml(String(breakdown.km)) : "-"}</dd></div>
+      <div><dt>Registado por</dt><dd>${escapeHtml(breakdown.registeredBy || "-")}</dd></div>
+      <div><dt>Resp. logística</dt><dd>${escapeHtml(breakdown.logisticsResp || "-")}</dd></div>
+      ${breakdown.recurrentOf ? `<div><dt>Reincidente de</dt><dd>${escapeHtml(breakdown.recurrentOf)}</dd></div>` : ""}
       <div><dt>Última nota</dt><dd>${escapeHtml(breakdown.lastNote || "-")}</dd></div>
     </dl>
 
@@ -2943,6 +2986,9 @@ function renderBreakdowns() {
             <h2>Ocorrências</h2>
             <p>${list.length} registos encontrados</p>
           </div>
+          <div class="panel-header__actions">
+            <button class="primary-button" type="button" data-view="new"><span data-icon="plus"></span><span>Nova ocorrência</span></button>
+          </div>
         </div>
         <div class="chip-filters occurrence-stages">
           ${OCCURRENCE_STAGES.map(([v, l]) => {
@@ -3098,6 +3144,194 @@ function renderNewBreakdown() {
       </form>
     </section>
   `;
+}
+
+function occurrencesForPlate(plate) {
+  const p = normalizePlate(plate || "");
+  if (!p) return [];
+  return state.breakdowns
+    .filter((b) => normalizePlate(b.plate) === p)
+    .map((b) => ({
+      number: b.occurrenceNumber || String(b.id),
+      label: `${b.occurrenceNumber || "s/nº"} · ${b.interventionType || ""} · ${formatDate(b.reportedAt)}${b.description ? ` · ${b.description.slice(0, 28)}` : ""}`
+    }));
+}
+
+function openOccurrenceModal() {
+  const today = todayISO();
+  const link = state.avariaFromVistoria || null;
+  const linkPlate = link?.plate || "";
+  const descPrefill = link
+    ? `[Vistoria ${formatDate(link.date)}] ${link.item}${link.state ? ` (${link.state})` : ""}${link.note ? ` — ${link.note}` : ""}`
+    : "";
+  const oficinaOptions = (tipo) => entidadesByCategoria("Oficina")
+    .filter((o) => !tipo || normalizeText(o.tipo) === normalizeText(tipo))
+    .map((o) => `<option value="${escapeAttr(o.empresa)}">${escapeHtml(o.empresa)}</option>`).join("");
+
+  const body = `
+    <form class="modal-form occ-form" data-form="new-breakdown">
+      <div class="occ-section">
+        <p class="occ-section__title">1 · Intervenção</p>
+        <div class="field-row">
+          <label class="field">Tipo de intervenção *
+            <select name="interventionType" required>
+              ${INTERVENTION_TYPES.map((t) => `<option value="${escapeAttr(t)}">${escapeHtml(t)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">Prioridade
+            <select name="priority"><option value="">—</option>${PRIORITIES.map(([p, l]) => `<option value="${escapeAttr(p)}">${escapeHtml(p)} · ${escapeHtml(l)}</option>`).join("")}</select>
+          </label>
+        </div>
+        <label class="field field--check"><input type="checkbox" name="recurrent" id="occ-recurrent"> <span>Ocorrência reincidente?</span></label>
+        <label class="field" id="occ-recurrent-wrap" hidden>Ocorrência anterior (mesma viatura)
+          <select name="recurrentOf" id="occ-recurrent-of"><option value="">— selecione a matrícula primeiro —</option></select>
+        </label>
+      </div>
+
+      <div class="occ-section">
+        <p class="occ-section__title">2 · Viatura</p>
+        <div class="field-row">
+          <label class="field">Matrícula *
+            <select name="plate" id="occ-plate" required>
+              <option value="">Selecione a matrícula</option>
+              ${fleetPlateOptionsHtml("", linkPlate)}
+            </select>
+          </label>
+          <label class="field">Nº equipamento
+            <input id="occ-equipment" name="equipment" readonly placeholder="(pela matrícula)">
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field">Tipo de viatura
+            <input id="occ-vehicletype" readonly placeholder="(pela matrícula)">
+          </label>
+          <label class="field">Motorista
+            <input id="occ-driver" name="driver" readonly placeholder="(pela matrícula)">
+          </label>
+        </div>
+      </div>
+
+      <div class="occ-section">
+        <p class="occ-section__title">3 · Comunicação e oficina</p>
+        <div class="field-row">
+          <label class="field">Data de abertura
+            <input type="date" name="reportedAt" value="${today}" required>
+          </label>
+          <label class="field">Data de comunicação
+            <input type="date" name="communicatedAt">
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field">Intervenção no terreno?
+            <select name="onSite" id="occ-onsite"><option value="nao">Não</option><option value="sim">Sim</option></select>
+          </label>
+          <label class="field">Estado inicial *
+            <select name="status" required>${options.statuses.filter((s) => s !== "Concluido").map((s) => `<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join("")}</select>
+          </label>
+        </div>
+        <div id="occ-workshop-fields">
+          <div class="field-row">
+            <label class="field">Tipo de oficina
+              <select name="workshopType" id="occ-workshoptype"><option value="">—</option><option value="Interna">Interna</option><option value="Externa">Externa</option></select>
+            </label>
+            <label class="field">Oficina (das Entidades)
+              <select name="workshop" id="occ-workshop"><option value="">—</option>${oficinaOptions("")}</select>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">Previsão entrada oficina
+              <input type="date" name="expectedEntryAt">
+            </label>
+            <label class="field">Previsão saída oficina
+              <input type="date" name="expectedExitAt">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="occ-section">
+        <p class="occ-section__title">4 · Classificação e detalhes</p>
+        <div class="field-row">
+          <label class="field">Tipo de avaria
+            <select name="type"><option value="">—</option>${options.types.map((t) => `<option value="${escapeAttr(t)}">${escapeHtml(t)}</option>`).join("")}</select>
+          </label>
+          <label class="field">Km
+            <input type="number" name="km" min="0" placeholder="Quilómetros">
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field">Registado por
+            <input name="registeredBy" value="${escapeAttr(remoteConfig.operator || "")}">
+          </label>
+          <label class="field">Resp. logística
+            <input name="logisticsResp" placeholder="Ex.: Ana Fialho">
+          </label>
+        </div>
+        <label class="field field--wide">Descrição *
+          <textarea name="description" rows="3" required>${escapeHtml(descPrefill)}</textarea>
+        </label>
+        <label class="field field--wide">Ficheiro / fotografia
+          <input type="file" name="attachments" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple>
+        </label>
+      </div>
+
+      ${link ? `<p class="occ-linknote">🔗 Fica ligada à vistoria de ${escapeHtml(formatDate(link.date))} — ponto ${escapeHtml(link.item)}.</p>` : ""}
+
+      <div class="modal-form__actions">
+        <button type="button" class="ghost-button" data-action="close-modal">Cancelar</button>
+        <button type="submit" class="primary-button"><span data-icon="check"></span><span>Gravar ocorrência</span></button>
+      </div>
+    </form>`;
+
+  openModal(link ? "Nova ocorrência (origem: vistoria)" : "Nova ocorrência", body, { size: "wide" });
+  wireOccurrenceModal();
+}
+
+function wireOccurrenceModal() {
+  const root = document.querySelector("#modal-root");
+  if (!root) return;
+  const plate = root.querySelector("#occ-plate");
+  const equip = root.querySelector("#occ-equipment");
+  const driver = root.querySelector("#occ-driver");
+  const vtype = root.querySelector("#occ-vehicletype");
+  const recurrentChk = root.querySelector("#occ-recurrent");
+  const recurrentWrap = root.querySelector("#occ-recurrent-wrap");
+  const recurrentOf = root.querySelector("#occ-recurrent-of");
+  const onsite = root.querySelector("#occ-onsite");
+  const workshopFields = root.querySelector("#occ-workshop-fields");
+  const workshopType = root.querySelector("#occ-workshoptype");
+  const workshopSel = root.querySelector("#occ-workshop");
+
+  const populateRecurrent = () => {
+    if (!recurrentOf) return;
+    const list = occurrencesForPlate(plate.value);
+    recurrentOf.innerHTML = `<option value="">—</option>` + list.map((o) => `<option value="${escapeAttr(o.number)}">${escapeHtml(o.label)}</option>`).join("");
+  };
+  const fillFromPlate = () => {
+    const f = findFleetByPlate(plate.value);
+    if (equip) equip.value = f?.equipment || "";
+    if (driver) driver.value = f?.driver || "";
+    if (vtype) vtype.value = f?.description || "";
+    populateRecurrent();
+  };
+  const toggleRecurrent = () => {
+    if (recurrentWrap) recurrentWrap.hidden = !recurrentChk.checked;
+    if (recurrentChk.checked) populateRecurrent();
+  };
+  const toggleOnSite = () => {
+    if (workshopFields) workshopFields.style.display = onsite.value === "sim" ? "none" : "";
+  };
+  const filterOficinas = () => {
+    const cur = workshopSel.value;
+    const oficinas = entidadesByCategoria("Oficina").filter((o) => !workshopType.value || normalizeText(o.tipo) === normalizeText(workshopType.value));
+    workshopSel.innerHTML = `<option value="">—</option>` + oficinas.map((o) => `<option value="${escapeAttr(o.empresa)}"${o.empresa === cur ? " selected" : ""}>${escapeHtml(o.empresa)}</option>`).join("");
+  };
+
+  if (plate) plate.addEventListener("change", fillFromPlate);
+  if (recurrentChk) recurrentChk.addEventListener("change", toggleRecurrent);
+  if (onsite) onsite.addEventListener("change", toggleOnSite);
+  if (workshopType) workshopType.addEventListener("change", filterOficinas);
+  if (plate && plate.value) fillFromPlate();
 }
 
 function fleetDescriptions() {
@@ -3813,6 +4047,13 @@ async function handleNewBreakdown(form) {
   const interventionType = String(data.get("interventionType") || "Corretiva");
   const priority = String(data.get("priority") || "");
   const occurrenceNumber = generateOccurrenceNumber(interventionType, reportedAt);
+  const onSite = String(data.get("onSite") || "") === "sim";
+  const communicatedAt = emptyToNull(data.get("communicatedAt")) || "";
+  const km = String(data.get("km") || "").trim();
+  const registeredBy = String(data.get("registeredBy") || remoteConfig.operator || "").trim();
+  const logisticsResp = String(data.get("logisticsResp") || "").trim();
+  const recurrentOf = String(data.get("recurrentOf") || "").trim();
+  const fromModal = isModalOpen();
   const id = generateId();
   const wasRemoteReady = remoteStatus.ready;
   let attachments = [];
@@ -3832,14 +4073,21 @@ async function handleNewBreakdown(form) {
     interventionType,
     occurrenceNumber,
     priority,
+    communicatedAt,
+    onSite,
+    km,
+    registeredBy,
+    logisticsResp,
+    recurrentOf,
     type: String(data.get("type") || "Outro"),
     status: String(data.get("status") || "Parado"),
     situation: String(data.get("situation") || "").trim(),
     reportedAt,
     workshopEntryAt: emptyToNull(data.get("workshopEntryAt")),
-    expectedExitAt: emptyToNull(data.get("expectedExitAt")),
-    workshopType: String(data.get("workshopType") || ""),
-    workshop: String(data.get("workshop") || ""),
+    expectedEntryAt: onSite ? null : emptyToNull(data.get("expectedEntryAt")),
+    expectedExitAt: onSite ? null : emptyToNull(data.get("expectedExitAt")),
+    workshopType: onSite ? "" : String(data.get("workshopType") || ""),
+    workshop: onSite ? "" : String(data.get("workshop") || ""),
     driver: String(data.get("driver") || ""),
     cost: null,
     description,
@@ -3864,10 +4112,11 @@ async function handleNewBreakdown(form) {
 
   state.breakdowns.unshift(breakdown);
   state.selectedId = breakdown.id;
-  state.currentView = "meeting";
+  state.currentView = fromModal ? "breakdowns" : "meeting";
   const originNote = breakdown.vistoriaId ? ` | Origem: vistoria ${formatDate(breakdown.vistoriaDate)} (${breakdown.vistoriaItem})` : "";
   const auditEvent = logAudit(breakdown, "Nova ocorrência", `${occurrenceNumber} · ${interventionType}${priority ? ` · ${priority}` : ""} — ${attachmentNote ? `${description} | Anexos: ${attachmentNote}` : description}${originNote}`);
   recordMeetingEvent("new", breakdown, description);
+  if (fromModal) closeModal();
   saveState();
   showToast(`Ocorrência ${occurrenceNumber} criada.`);
   render();

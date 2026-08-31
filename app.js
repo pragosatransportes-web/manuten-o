@@ -474,6 +474,20 @@ document.addEventListener("click", async (event) => {
   if (action === "delete-fault-type") {
     await deleteFaultType(button.dataset.id);
   }
+  if (action === "gantt-mode") {
+    state.ganttMode = button.dataset.mode || "week";
+    saveState();
+    render();
+  }
+  if (action === "gantt-prev") { ganttShift(-1); saveState(); render(); }
+  if (action === "gantt-next") { ganttShift(1); saveState(); render(); }
+  if (action === "gantt-today") { state.ganttAnchor = todayISO(); saveState(); render(); }
+  if (action === "gantt-goto-day") {
+    state.ganttAnchor = button.dataset.date || todayISO();
+    state.ganttMode = "day";
+    saveState();
+    render();
+  }
 });
 
 // Fechar modal com a tecla Escape.
@@ -663,6 +677,8 @@ function makeInitialState() {
     faultTypes: [],
     definicoesVehicleType: "Trator",
     fleetView: "cards",
+    ganttMode: "week",
+    ganttAnchor: "",
     ausenciaMonth: currentMonthISO(),
     breakdowns,
     snapshots: seed.snapshots || [],
@@ -2280,7 +2296,7 @@ function editMeetingEventFromReport(meetingId, eventId) {
 // Navegação em 2 níveis: 5 áreas, cada uma com as suas secções (redesign ARGOS).
 const NAV_GROUPS = [
   { id: "dashboard", label: "Dashboard", views: [["dashboard", "Dashboard"]] },
-  { id: "manutencao", label: "Manutenção", views: [["breakdowns", "Ocorrências"], ["new", "Nova ocorrência"], ["meeting", "Reuniões"]] },
+  { id: "manutencao", label: "Manutenção", views: [["breakdowns", "Ocorrências"], ["gantt", "Planeamento"], ["new", "Nova ocorrência"], ["meeting", "Reuniões"]] },
   { id: "frota", label: "Frota", views: [["fleet", "Viaturas"], ["vistoria", "Vistorias"], ["definicoes", "Definições"]] },
   { id: "entidades", label: "Entidades", views: [["entidades", "Entidades"], ["ausencias", "Ausências"]] },
   { id: "analise", label: "Análise", views: [["audit", "Rastreio"]] }
@@ -2325,6 +2341,7 @@ function render(focusSelector = "") {
     dashboard: renderDashboard,
     meeting: renderMeeting,
     breakdowns: renderBreakdowns,
+    gantt: renderGantt,
     new: renderNewBreakdown,
     fleet: renderFleet,
     vistoria: renderVistoria,
@@ -3094,6 +3111,155 @@ function renderBreakdowns() {
       </div>
     </section>
   `;
+}
+
+// ── PLANEAMENTO (calendário de intervenções) ───────────────────────────────
+
+const GANTT_MODES = [["day", "Dia"], ["week", "Semana"], ["month", "Mês"]];
+const GANTT_WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+function ganttAnchorISO() { return state.ganttAnchor || todayISO(); }
+function ganttKeyDate(b) { return String(b.expectedEntryAt || b.reportedAt || "").slice(0, 10); }
+function ganttActiveByDate() {
+  const map = {};
+  state.breakdowns.forEach((b) => {
+    if (b.status === "Concluido") return;
+    const k = ganttKeyDate(b);
+    if (!k) return;
+    (map[k] = map[k] || []).push(b);
+  });
+  return map;
+}
+function isoAddDays(iso, n) {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function isoMondayOf(iso) {
+  const d = new Date(`${iso}T00:00:00`);
+  const dow = (d.getDay() + 6) % 7;
+  return isoAddDays(iso, -dow);
+}
+function ganttStatusClass(status) {
+  const s = normalizeText(status);
+  if (s.includes("agendado")) return "gs-agendado";
+  if (s.includes("pode circular")) return "gs-circular";
+  if (s === "parado") return "gs-parado";
+  return "gs-outro";
+}
+function ganttChip(b) {
+  return `<button class="gantt-chip ${ganttStatusClass(b.status)}" type="button" data-action="select-breakdown" data-id="${escapeAttr(b.id)}" title="${escapeAttr(`${b.occurrenceNumber || ""} · ${b.interventionType || ""} · ${b.status || ""} · ${b.description || ""}`)}">
+    <strong>${escapeHtml(b.plate || b.equipment || "-")}</strong>
+    <span>${escapeHtml(b.occurrenceNumber || b.interventionType || "")}</span>
+    ${priorityBadge(b.priority)}
+  </button>`;
+}
+function ganttShift(delta) {
+  const mode = state.ganttMode || "week";
+  const anchor = ganttAnchorISO();
+  if (mode === "day") state.ganttAnchor = isoAddDays(anchor, delta);
+  else if (mode === "week") state.ganttAnchor = isoAddDays(anchor, delta * 7);
+  else {
+    const [y, m] = anchor.split("-").map(Number);
+    const nd = new Date(y, m - 1 + delta, 1);
+    state.ganttAnchor = `${nd.getFullYear()}-${String(nd.getMonth() + 1).padStart(2, "0")}-01`;
+  }
+}
+
+function renderGantt() {
+  const mode = GANTT_MODES.some(([m]) => m === state.ganttMode) ? state.ganttMode : "week";
+  const anchor = ganttAnchorISO();
+  const byDate = ganttActiveByDate();
+  const today = todayISO();
+
+  let title = "";
+  if (mode === "day") title = formatDate(anchor);
+  else if (mode === "week") {
+    const mon = isoMondayOf(anchor);
+    title = `${formatDate(mon)} – ${formatDate(isoAddDays(mon, 5))}`;
+  } else {
+    const [y, m] = anchor.split("-").map(Number);
+    title = `${MONTH_NAMES_PT[m - 1]} ${y}`;
+  }
+
+  const modeTabs = GANTT_MODES.map(([m, l]) =>
+    `<button type="button" class="chip-filter ${mode === m ? "active" : ""}" data-action="gantt-mode" data-mode="${m}">${escapeHtml(l)}</button>`).join("");
+
+  let bodyHtml = "";
+  if (mode === "day") {
+    const list = (byDate[anchor] || []).slice().sort((a, b) => (a.plate || "").localeCompare(b.plate || "", "pt"));
+    bodyHtml = `<div class="gantt-day">${list.length ? list.map(ganttChip).join("") : '<p class="empty-state">Sem intervenções agendadas neste dia.</p>'}</div>`;
+  } else if (mode === "week") {
+    const mon = isoMondayOf(anchor);
+    const days = Array.from({ length: 6 }, (_, i) => isoAddDays(mon, i));
+    bodyHtml = `<div class="gantt-week">${days.map((d, i) => {
+      const list = byDate[d] || [];
+      return `<div class="gantt-col ${d === today ? "is-today" : ""}">
+        <div class="gantt-col__head">${GANTT_WEEKDAYS[i]} · ${d.slice(8, 10)}/${d.slice(5, 7)}</div>
+        <div class="gantt-col__body">${list.length ? list.map(ganttChip).join("") : '<span class="gantt-empty">—</span>'}</div>
+      </div>`;
+    }).join("")}</div>`;
+  } else {
+    const [y, m] = anchor.split("-").map(Number);
+    const first = `${y}-${String(m).padStart(2, "0")}-01`;
+    const lastDay = new Date(y, m, 0).getDate();
+    const lastISO = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    let cur = isoMondayOf(first);
+    const rows = [];
+    while (cur <= lastISO) {
+      rows.push(Array.from({ length: 6 }, (_, i) => isoAddDays(cur, i)));
+      cur = isoAddDays(cur, 7);
+    }
+    const monthPrefix = `${y}-${String(m).padStart(2, "0")}`;
+    bodyHtml = `
+      <div class="gantt-month">
+        <div class="gantt-month__head">${GANTT_WEEKDAYS.map((w) => `<div>${w}</div>`).join("")}</div>
+        ${rows.map((week) => `<div class="gantt-month__row">${week.map((d) => {
+          const list = byDate[d] || [];
+          const out = d.slice(0, 7) !== monthPrefix;
+          return `<div class="gantt-cell ${out ? "is-out" : ""} ${d === today ? "is-today" : ""}">
+            <button class="gantt-cell__day" type="button" data-action="gantt-goto-day" data-date="${d}">${d.slice(8, 10)}</button>
+            ${list.slice(0, 3).map((b) => `<button class="gantt-mini ${ganttStatusClass(b.status)}" type="button" data-action="select-breakdown" data-id="${escapeAttr(b.id)}" title="${escapeAttr(`${b.plate || ""} · ${b.occurrenceNumber || ""}`)}">${escapeHtml(b.plate || b.equipment || "-")}</button>`).join("")}
+            ${list.length > 3 ? `<span class="gantt-more">+${list.length - 3}</span>` : ""}
+          </div>`;
+        }).join("")}</div>`).join("")}
+      </div>`;
+  }
+
+  const prev = getFleetDateAlerts().filter((a) => Number.isFinite(a.days) && a.days >= 0 && a.days <= 90);
+
+  return `
+    <section class="page-grid">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Manutenção</p>
+            <h2>Planeamento</h2>
+            <p>Intervenções em curso e agendadas (por data de entrada prevista ou de abertura).</p>
+          </div>
+          <div class="gantt-controls">
+            <div class="chip-filters">${modeTabs}</div>
+            <div class="gantt-nav">
+              <button class="ghost-button" type="button" data-action="gantt-prev" title="Anterior">‹</button>
+              <button class="ghost-button" type="button" data-action="gantt-today">Hoje</button>
+              <button class="ghost-button" type="button" data-action="gantt-next" title="Seguinte">›</button>
+            </div>
+          </div>
+        </div>
+        <div class="gantt-title">${escapeHtml(title)}</div>
+        ${bodyHtml}
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div><p class="eyebrow">Frota</p><h2>Próximas preventivas</h2><p>Inspeções, tacógrafos, revisões e aferições nos próximos 3 meses.</p></div></div>
+        <div class="deadline-list">
+          ${prev.length ? prev.map((item) => `
+            <article class="deadline-row">
+              <div><strong>Equip. ${escapeHtml(item.equipment)} · ${escapeHtml(item.plate || "-")}</strong><span>${escapeHtml(item.label)} · ${escapeHtml(formatDate(item.date))}</span></div>
+              ${renderDueBadge(item.date)}
+            </article>`).join("") : '<p class="empty-state">Sem preventivas nos próximos 3 meses.</p>'}
+        </div>
+      </div>
+    </section>`;
 }
 
 function renderNewBreakdown() {

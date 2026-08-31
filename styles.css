@@ -1121,6 +1121,40 @@ body.modal-open { overflow: hidden; }
 .def-row__actions { display: flex; gap: 2px; }
 @media (max-width: 560px) { .def-row { grid-template-columns: 1fr; align-items: start; } }
 
+/* ---- Planeamento / calendário de intervenções (Fatia 4) ---- */
+.gantt-controls { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+.gantt-nav { display: flex; gap: 4px; }
+.gantt-nav .ghost-button { padding: 4px 12px; min-height: 32px; }
+.gantt-title { padding: 10px 18px; font-weight: 700; color: var(--ink); font-size: 14px; border-bottom: 1px solid var(--line); }
+.gantt-day { display: grid; gap: 8px; padding: 16px; }
+.gantt-week { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; padding: 16px; }
+.gantt-col { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-soft); min-height: 120px; display: flex; flex-direction: column; }
+.gantt-col.is-today { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.gantt-col__head { padding: 6px 8px; font-size: 11px; font-weight: 700; color: var(--muted); border-bottom: 1px solid var(--line); text-align: center; }
+.gantt-col__body { padding: 6px; display: grid; gap: 5px; align-content: start; }
+.gantt-empty { color: var(--muted-light); font-size: 12px; text-align: center; padding: 8px 0; }
+.gantt-chip { display: block; text-align: left; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: 6px; background: var(--surface); cursor: pointer; transition: box-shadow 120ms; }
+.gantt-chip:hover { box-shadow: var(--shadow-sm); }
+.gantt-chip strong { display: block; font-size: 12px; color: var(--ink); }
+.gantt-chip span { display: block; font-size: 10px; color: var(--muted); }
+.gs-parado { border-left-color: var(--red); }
+.gs-agendado { border-left-color: #2563eb; }
+.gs-circular { border-left-color: var(--amber); }
+.gs-outro { border-left-color: var(--line-strong); }
+.gantt-month { padding: 12px 16px 16px; }
+.gantt-month__head, .gantt-month__row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.gantt-month__head { margin-bottom: 6px; }
+.gantt-month__head div { text-align: center; font-size: 11px; font-weight: 700; color: var(--muted); }
+.gantt-month__row { margin-bottom: 6px; }
+.gantt-cell { min-height: 76px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); padding: 4px; display: flex; flex-direction: column; gap: 3px; }
+.gantt-cell.is-out { background: var(--surface-soft); opacity: 0.55; }
+.gantt-cell.is-today { border-color: var(--accent); }
+.gantt-cell__day { align-self: flex-start; font-size: 11px; font-weight: 700; color: var(--muted); background: transparent; border: none; cursor: pointer; padding: 0 2px; }
+.gantt-cell.is-today .gantt-cell__day { color: var(--accent-strong); }
+.gantt-mini { display: block; width: 100%; text-align: left; font-size: 10px; padding: 2px 5px; border: 1px solid var(--line); border-left: 2px solid var(--line-strong); border-radius: 4px; background: var(--surface-soft); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gantt-more { font-size: 10px; color: var(--muted); padding-left: 4px; }
+@media (max-width: 780px) { .gantt-week, .gantt-month__head, .gantt-month__row { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
 .fleet-date-cell { display: grid; gap: 5px; min-width: 148px; }
 
 .fleet-date-cell__foot {

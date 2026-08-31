@@ -194,6 +194,48 @@ async function syncBreakdownToTrello(breakdown, note) {
   }
 }
 
+// Reafetação de viatura: move o cartão da ocorrência para a lista da NOVA viatura
+// (pode mudar de quadro CPSA<->PTSA, via idBoard), atualiza a descrição e comenta.
+// Ao contrário de upsertTrelloCard, aqui MOVER de lista é intencional.
+async function reassignTrelloCard(breakdown, note) {
+  if (!breakdown || !trelloSettings.key) return;
+  if (!trelloEnabled()) return; // silencioso se o Trello não estiver ativo neste dispositivo
+  try {
+    const boards = await ensureTrelloDirectory();
+    // O cartão estava na viatura antiga — procura-o nos dois quadros de trabalho pelo marcador.
+    let existing = null;
+    for (const board of boards.filter((b) => TRELLO_WORK_BOARDS.includes(b.name))) {
+      existing = await findTrelloCardOnBoard(board.id, breakdown.id);
+      if (existing) break;
+    }
+    const target = findTrelloVehicleList(boards, breakdown);
+    if (!target) {
+      showToast(`Trello: sem lista para a nova viatura (${breakdown.plate || "-"}).`);
+      return;
+    }
+    const params = {
+      name: trelloCardTitle(breakdown),
+      desc: trelloCardDesc(breakdown),
+      due: breakdown.expectedExitAt ? `${breakdown.expectedExitAt}T17:00:00.000Z` : "null",
+      dueComplete: breakdown.status === "Concluido" ? "true" : "false",
+      idList: target.list.id,
+      idBoard: target.board.id
+    };
+    if (existing) {
+      await trelloFetch(`/cards/${existing.id}`, { method: "PUT", params });
+      if (note) await trelloFetch(`/cards/${existing.id}/actions/comments`, { method: "POST", params: { text: note } });
+      showToast(`Cartão Trello movido para ${target.board.name}.`);
+    } else {
+      const card = await trelloFetch("/cards", { method: "POST", params: { ...params, pos: "top" } });
+      if (note) await trelloFetch(`/cards/${card.id}/actions/comments`, { method: "POST", params: { text: note } });
+      showToast(`Cartão criado no Trello: ${target.board.name}.`);
+    }
+  } catch (error) {
+    console.error(error);
+    showToast("Trello: não foi possível mover o cartão.");
+  }
+}
+
 async function syncAllBreakdownsToTrello() {
   if (!trelloEnabled() && !requestTrelloToken()) {
     showToast("Sincronização com o Trello não ativada neste dispositivo.");

@@ -4429,6 +4429,10 @@ async function reassignBreakdownVehicle(id) {
     await persistBreakdownRemote(breakdown);
     await persistAuditRemote(auditEvent);
   });
+  // Mover o cartão do Trello para a lista da nova viatura (se o Trello estiver ativo).
+  if (typeof reassignTrelloCard === "function") {
+    reassignTrelloCard(breakdown, note);
+  }
 }
 
 async function closeBreakdown(id) {

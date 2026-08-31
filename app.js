@@ -167,6 +167,7 @@ try { isAdmin = sessionStorage.getItem(ADMIN_STORAGE_KEY) === "1"; } catch (e) {
 // Tudo o resto (atualizar estados, concluir, editar, acrescentar) é livre.
 const ADMIN_ACTIONS = new Set([
   "delete-fleet", "delete-ausencia", "delete-vistoria", "delete-entidade", "delete-fault-type",
+  "reassign-vehicle",
   "meeting-event-delete", "dock-item-delete", "delete-meeting"
 ]);
 const ADMIN_FORMS = new Set();
@@ -369,6 +370,9 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "close-breakdown") {
     await closeBreakdown(button.dataset.id);
+  }
+  if (action === "reassign-vehicle") {
+    await reassignBreakdownVehicle(button.dataset.id);
   }
   if (action === "dashboard-date-tab") {
     state.dashboardDateTab = button.dataset.field;
@@ -2897,6 +2901,18 @@ function renderDetail(breakdown) {
 
     ${renderAttachments(breakdown)}
 
+    <div class="admin-reassign">
+      <p class="admin-reassign__title">🔒 Admin · Reafetar viatura</p>
+      <p class="admin-reassign__hint">Move esta ocorrência para outra matrícula. O equipamento e o motorista passam a ser os da nova viatura; o conteúdo da ocorrência mantém-se.</p>
+      <div class="admin-reassign__row">
+        <select data-reassign-plate aria-label="Nova matrícula de destino">
+          <option value="">Escolher matrícula de destino…</option>
+          ${fleetPlateOptionsHtml("", "")}
+        </select>
+        <button class="ghost-button" type="button" data-action="reassign-vehicle" data-id="${escapeAttr(breakdown.id)}">Reafetar</button>
+      </div>
+    </div>
+
     <form class="quick-form" data-form="quick-update">
       <div class="form-grid">
         <label class="field">
@@ -4380,6 +4396,35 @@ async function handleNewBreakdown(form) {
   if (typeof syncBreakdownToTrello === "function") {
     syncBreakdownToTrello(breakdown, "");
   }
+  await persistRemoteSafely(async () => {
+    await persistBreakdownRemote(breakdown);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
+async function reassignBreakdownVehicle(id) {
+  const breakdown = state.breakdowns.find((item) => String(item.id) === String(id));
+  if (!breakdown) return;
+  const sel = document.querySelector("[data-reassign-plate]");
+  const newPlate = sel ? String(sel.value || "").trim() : "";
+  if (!newPlate) { showToast("Escolha a matrícula de destino."); return; }
+  const target = findFleetByPlate(newPlate);
+  if (!target) { showToast("Matrícula não encontrada na frota."); return; }
+  const oldPlate = breakdown.plate || "-";
+  const oldEquip = breakdown.equipment || "-";
+  if (normalizePlate(target.plate) === normalizePlate(oldPlate)) { showToast("A ocorrência já está afeta a esta viatura."); return; }
+  if (!window.confirm(`Reafetar a ocorrência ${breakdown.occurrenceNumber || ""} de ${oldPlate} (equip. ${oldEquip}) para ${target.plate} (equip. ${target.equipment})?`)) return;
+
+  breakdown.plate = target.plate;
+  breakdown.equipment = target.equipment;
+  breakdown.driver = target.driver || "";
+
+  const note = `Reafetada de ${oldPlate} (equip. ${oldEquip}) para ${target.plate} (equip. ${target.equipment})`;
+  appendHistory(breakdown, breakdown.status, note, todayISO());
+  const auditEvent = logAudit(breakdown, "Reafetação de viatura", note);
+  saveState();
+  showToast(`Ocorrência reafetada à ${target.plate}.`);
+  render();
   await persistRemoteSafely(async () => {
     await persistBreakdownRemote(breakdown);
     await persistAuditRemote(auditEvent);

@@ -12,6 +12,8 @@ const FLEET_NA_DATE = "9999-12-31";
 let remoteFleetHasDriver = true;
 let remoteFleetHasRevision = true;
 let remoteFleetHasWorkshop = true;
+let remoteFleetHasPartner = true;
+let remoteFleetHasLogisticsResp = true;
 let remoteBreakdownHasOccurrence = true;
 let remoteBreakdownHasDetails = true;
 
@@ -417,6 +419,9 @@ document.addEventListener("click", async (event) => {
     saveState();
     render();
   }
+  if (action === "fleet-logisticsresp-conjunto") {
+    await applyLogisticsRespToConjunto(button.dataset.equipment);
+  }
   if (action === "ausencia-prev-month") shiftAusenciaMonth(-1);
   if (action === "ausencia-next-month") shiftAusenciaMonth(1);
   if (action === "ausencia-today") {
@@ -556,6 +561,12 @@ document.addEventListener("change", async (event) => {
   }
   if (target.dataset.fleetWorkshop) {
     await updateFleetWorkshop(target.dataset.equipment, target.value);
+  }
+  if (target.dataset.fleetPartner) {
+    await updateFleetPartner(target.dataset.equipment, target.value);
+  }
+  if (target.dataset.fleetLogisticsresp) {
+    await updateFleetLogisticsResp(target.dataset.equipment, target.value);
   }
   if (target.dataset.faultPriority) {
     await updateFaultTypePriority(target.dataset.id, target.value);
@@ -877,6 +888,8 @@ async function loadRemoteState() {
     remoteFleetHasDriver = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "driver");
     remoteFleetHasRevision = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "revision_at");
     remoteFleetHasWorkshop = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "preferred_workshop");
+    remoteFleetHasPartner = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "partner_equipment");
+    remoteFleetHasLogisticsResp = Object.prototype.hasOwnProperty.call(fleetResult.data[0], "logistics_resp");
   }
   if (breakdownsResult.data.length) {
     remoteBreakdownHasOccurrence = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "occurrence_number");
@@ -898,6 +911,8 @@ async function loadRemoteState() {
   // localmente (localStorage). Preserva os nomes já escritos ao recarregar a frota.
   const localDrivers = new Map((state.fleet || []).map((f) => [String(f.equipment), f.driver || ""]));
   const localWorkshops = new Map((state.fleet || []).map((f) => [String(f.equipment), f.preferredWorkshop || ""]));
+  const localPartners = new Map((state.fleet || []).map((f) => [String(f.equipment), f.partnerEquipment || ""]));
+  const localLogResp = new Map((state.fleet || []).map((f) => [String(f.equipment), f.logisticsResp || ""]));
   const mapFleetRow = (row) => {
     const item = dbFleetToApp(row);
     if (!remoteFleetHasDriver) {
@@ -907,6 +922,14 @@ async function loadRemoteState() {
     if (!remoteFleetHasWorkshop) {
       const localWorkshop = localWorkshops.get(String(item.equipment));
       if (localWorkshop) item.preferredWorkshop = localWorkshop;
+    }
+    if (!remoteFleetHasPartner) {
+      const localPartner = localPartners.get(String(item.equipment));
+      if (localPartner) item.partnerEquipment = localPartner;
+    }
+    if (!remoteFleetHasLogisticsResp) {
+      const localLog = localLogResp.get(String(item.equipment));
+      if (localLog) item.logisticsResp = localLog;
     }
     return item;
   };
@@ -1001,6 +1024,12 @@ function applyRemoteRow(payload, collection, mapper) {
     }
     if (collection === "fleet" && !remoteFleetHasWorkshop) {
       item.preferredWorkshop = state.fleet[index].preferredWorkshop || item.preferredWorkshop;
+    }
+    if (collection === "fleet" && !remoteFleetHasPartner) {
+      item.partnerEquipment = state.fleet[index].partnerEquipment || item.partnerEquipment;
+    }
+    if (collection === "fleet" && !remoteFleetHasLogisticsResp) {
+      item.logisticsResp = state.fleet[index].logisticsResp || item.logisticsResp;
     }
     if (collection === "breakdowns" && !remoteBreakdownHasOccurrence) {
       const prev = state.breakdowns[index];
@@ -1875,6 +1904,9 @@ function appFleetToDb(item) {
   if (remoteFleetHasRevision) row.revision_at = item.revisionAt || null;
   // Oficina preferencial (vem das Entidades) — só envia quando a coluna existe (migração 005).
   if (remoteFleetHasWorkshop) row.preferred_workshop = item.preferredWorkshop || null;
+  // Conjunto (trator+reboque) e Resp. logística por viatura — migração 009.
+  if (remoteFleetHasPartner) row.partner_equipment = item.partnerEquipment || null;
+  if (remoteFleetHasLogisticsResp) row.logistics_resp = item.logisticsResp || null;
   return row;
 }
 
@@ -1898,7 +1930,9 @@ function dbFleetToApp(row) {
     compressorReviewAt: row.compressor_review_at || null,
     wheelHubReviewAt: row.wheel_hub_review_at || null,
     revisionAt: row.revision_at || null,
-    preferredWorkshop: row.preferred_workshop || ""
+    preferredWorkshop: row.preferred_workshop || "",
+    partnerEquipment: row.partner_equipment ? normalizeEquipment(row.partner_equipment) : "",
+    logisticsResp: row.logistics_resp || ""
   };
 }
 
@@ -3491,6 +3525,9 @@ function openOccurrenceModal() {
             <input id="occ-driver" name="driver" readonly placeholder="(pela matrícula)">
           </label>
         </div>
+        <label class="field">Conjunto (trator/reboque)
+          <input id="occ-conjunto" name="conjunto" readonly placeholder="(atribuído se a viatura tiver conjunto)">
+        </label>
       </div>
 
       <div class="occ-section">
@@ -3610,6 +3647,12 @@ function wireOccurrenceModal() {
     if (equip) equip.value = f?.equipment || "";
     if (driver) driver.value = f?.driver || "";
     if (vtype) vtype.value = f?.description || "";
+    const conj = root.querySelector("#occ-conjunto");
+    if (conj) {
+      const pEq = f?.partnerEquipment;
+      const p = pEq ? state.fleet.find((x) => String(x.equipment) === String(pEq)) : null;
+      conj.value = p ? `${p.plate || "—"} · Equip. ${p.equipment || "-"}${p.description ? ` · ${p.description}` : ""}` : "";
+    }
     populateRecurrent();
     populateTypes();
   };
@@ -3748,6 +3791,7 @@ function renderFleet() {
           <button type="button" class="${fleetView === "table" ? "active" : ""}" data-action="fleet-view" data-mode="table">Tabela</button>
         </div>
       </div>
+      <datalist id="fleet-resploglist">${respLogSuggestions().map((n) => `<option value="${escapeAttr(n)}"></option>`).join("")}</datalist>
       ${fleetView === "table" ? renderFleetTable(list, activeCounts) : renderFleetCards(list, activeCounts)}
     </section>
   `;
@@ -3828,6 +3872,10 @@ function fleetCard(item, openCount) {
   if (marca) metaBits.push(escapeHtml(marca) + (item.year ? ` ${escapeHtml(String(item.year))}` : ""));
   const openTag = openCount ? `<span class="fleet-open">${openCount} avaria${openCount > 1 ? "s" : ""} aberta${openCount > 1 ? "s" : ""}</span>` : "";
   const metaLine = [metaBits.join(" · "), openTag].filter(Boolean).join(" · ");
+  const partner = item.partnerEquipment ? state.fleet.find((f) => String(f.equipment) === String(item.partnerEquipment)) : null;
+  const conjuntoLine = item.partnerEquipment
+    ? `<p class="fleet-card__conjunto">🔗 Conjunto com <strong>${escapeHtml(partner ? (partner.plate || "—") : ("Equip. " + item.partnerEquipment))}</strong>${partner ? ` · Equip. ${escapeHtml(partner.equipment || "-")}${partner.description ? ` · ${escapeHtml(partner.description)}` : ""}` : ""}</p>`
+    : "";
   return `
     <article class="fleet-card">
       <header class="fleet-card__head">
@@ -3842,9 +3890,12 @@ function fleetCard(item, openCount) {
       </header>
       ${metaLine ? `<p class="fleet-card__meta">${metaLine}</p>` : ""}
       ${badges ? `<div class="fleet-card__badges">${badges}</div>` : ""}
+      ${conjuntoLine}
       <div class="fleet-card__controls">
         <label class="fleet-mini"><span>Motorista</span>${renderFleetDriverCell(item)}</label>
         <label class="fleet-mini"><span>Oficina preferencial</span>${renderFleetOficinaCell(item)}</label>
+        <label class="fleet-mini"><span>Resp. logística${item.partnerEquipment ? ` <button type="button" class="link-button" data-action="fleet-logisticsresp-conjunto" data-equipment="${escapeAttr(item.equipment)}" title="Aplicar o mesmo responsável ao outro veículo do conjunto">↔ conjunto</button>` : ""}</span>${renderFleetLogisticsCell(item)}</label>
+        <label class="fleet-mini"><span>Conjunto (trator/reboque)</span>${renderFleetPartnerCell(item)}</label>
       </div>
       <footer class="fleet-card__foot">
         <button class="icon-button" type="button" data-action="delete-fleet" data-equipment="${escapeAttr(item.equipment)}" title="Remover viatura"><span data-icon="trash"></span></button>
@@ -4060,6 +4111,123 @@ async function updateFleetCompany(equipment, value) {
   });
 }
 
+
+// ── Conjunto (trator+reboque) e Resp. logística por viatura ─────────────────
+
+function renderFleetLogisticsCell(item) {
+  return `
+    <input
+      type="text"
+      list="fleet-resploglist"
+      value="${escapeAttr(item.logisticsResp || "")}"
+      placeholder="—"
+      data-equipment="${escapeAttr(item.equipment)}"
+      data-fleet-logisticsresp="true"
+      aria-label="Resp. logística equip. ${escapeAttr(item.equipment)}"
+    >`;
+}
+
+function renderFleetPartnerCell(item) {
+  const cur = String(item.partnerEquipment || "");
+  const others = state.fleet
+    .filter((f) => String(f.equipment) !== String(item.equipment))
+    .sort((a, b) => (a.plate || "").localeCompare(b.plate || "", "pt"));
+  const opts = ['<option value="">— sem conjunto —</option>'].concat(
+    others.map((f) => {
+      const sel = String(f.equipment) === cur ? " selected" : "";
+      const label = `${f.plate || "—"} · Equip. ${f.equipment || "-"}${f.description ? ` · ${f.description}` : ""}`;
+      return `<option value="${escapeAttr(f.equipment)}"${sel}>${escapeHtml(label)}</option>`;
+    })
+  );
+  if (cur && !others.some((f) => String(f.equipment) === cur)) {
+    opts.push(`<option value="${escapeAttr(cur)}" selected>Equip. ${escapeHtml(cur)} (atual)</option>`);
+  }
+  return `
+    <select
+      data-equipment="${escapeAttr(item.equipment)}"
+      data-fleet-partner="true"
+      aria-label="Conjunto equip. ${escapeAttr(item.equipment)}"
+    >${opts.join("")}</select>`;
+}
+
+function respLogSuggestions() {
+  const set = new Set();
+  (state.fleet || []).forEach((f) => { if (f.logisticsResp) set.add(String(f.logisticsResp).trim()); });
+  (state.entidades || []).forEach((e) => { if (e.contactoNome) set.add(String(e.contactoNome).trim()); });
+  return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b, "pt"));
+}
+
+async function updateFleetPartner(equipment, partnerEquipment) {
+  const item = state.fleet.find((f) => String(f.equipment) === String(equipment));
+  if (!item) return;
+  const newPartner = String(partnerEquipment || "").trim();
+  const oldPartner = String(item.partnerEquipment || "").trim();
+  if (newPartner === oldPartner) return;
+  const changed = new Map();
+  const byEq = (eq) => state.fleet.find((f) => String(f.equipment) === String(eq));
+  const mark = (f) => { if (f) changed.set(String(f.equipment), f); };
+  // Desfaz o back-link do par antigo.
+  if (oldPartner) {
+    const op = byEq(oldPartner);
+    if (op && String(op.partnerEquipment) === String(equipment)) { op.partnerEquipment = ""; mark(op); }
+  }
+  if (newPartner) {
+    const np = byEq(newPartner);
+    if (np) {
+      // Se o novo par já pertencia a outro conjunto, desfaz esse primeiro.
+      const npOld = String(np.partnerEquipment || "").trim();
+      if (npOld && npOld !== String(equipment)) {
+        const npOldItem = byEq(npOld);
+        if (npOldItem) { npOldItem.partnerEquipment = ""; mark(npOldItem); }
+      }
+      np.partnerEquipment = String(equipment); mark(np);
+    }
+  }
+  item.partnerEquipment = newPartner; mark(item);
+  const auditEvent = logFleetAudit(item, "partnerEquipment", oldPartner || "—", newPartner || "—");
+  saveState();
+  showToast(newPartner ? "Conjunto associado." : "Conjunto removido.");
+  render();
+  await persistRemoteSafely(async () => {
+    for (const f of changed.values()) await persistFleetRemote(f);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
+async function updateFleetLogisticsResp(equipment, value) {
+  const item = state.fleet.find((f) => String(f.equipment) === String(equipment));
+  if (!item) return;
+  const next = String(value || "").trim();
+  const previous = item.logisticsResp || "";
+  if (next === previous) return;
+  item.logisticsResp = next;
+  const auditEvent = logFleetAudit(item, "logisticsResp", previous, next);
+  saveState();
+  showToast("Resp. logística guardado.");
+  await persistRemoteSafely(async () => {
+    await persistFleetRemote(item);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
+async function applyLogisticsRespToConjunto(equipment) {
+  const item = state.fleet.find((f) => String(f.equipment) === String(equipment));
+  if (!item || !item.partnerEquipment) return;
+  const partner = state.fleet.find((f) => String(f.equipment) === String(item.partnerEquipment));
+  if (!partner) { showToast("O outro veículo do conjunto não foi encontrado."); return; }
+  const value = item.logisticsResp || "";
+  if ((partner.logisticsResp || "") === value) { showToast("O conjunto já tem o mesmo responsável."); return; }
+  const previous = partner.logisticsResp || "";
+  partner.logisticsResp = value;
+  const auditEvent = logFleetAudit(partner, "logisticsResp", previous, value);
+  saveState();
+  showToast("Resp. logística aplicado ao conjunto.");
+  render();
+  await persistRemoteSafely(async () => {
+    await persistFleetRemote(partner);
+    await persistAuditRemote(auditEvent);
+  });
+}
 
 async function handleNewFleet(form) {
   const data = new FormData(form);

@@ -3856,6 +3856,44 @@ function renderFleetCards(list, activeCounts) {
   return `<div class="fleet-grid">${list.map((item) => fleetCard(item, activeCounts[item.equipment] || 0)).join("")}</div>`;
 }
 
+function computeFleetHealth(item) {
+  const eq = String(item.equipment);
+  const plateN = normalizePlate(item.plate || "");
+  const open = state.breakdowns.filter((b) => b.status !== "Concluido" && (String(b.equipment) === eq || (plateN && normalizePlate(b.plate) === plateN)));
+  const recurrentCount = open.filter((b) => b.recurrentOf).length;
+  const dateHealth = (v) => {
+    if (!v || isFleetNA(v)) return { tone: "gray", word: "s/ data", penalty: 0 };
+    const d = daysUntil(v);
+    if (!Number.isFinite(d)) return { tone: "gray", word: "s/ data", penalty: 0 };
+    if (d < 0) return { tone: "red", word: "vencida", penalty: 15 };
+    if (d <= 30) return { tone: "yellow", word: "próxima", penalty: 6 };
+    return { tone: "green", word: "válida", penalty: 0 };
+  };
+  let score = 100;
+  open.forEach((b) => { score -= b.priority === "P1" ? 30 : b.priority === "P2" ? 18 : b.priority === "P3" ? 8 : b.priority === "P4" ? 4 : 12; });
+  const dateFields = ["inspectionAt", "tachographAt", "compressorReviewAt", "wheelHubReviewAt"];
+  if (isTratorFleet(item)) dateFields.push("revisionAt");
+  dateFields.forEach((f) => {
+    const p = dateHealth(item[f]).penalty;
+    // Inspeção e tacógrafo são legais/bloqueantes — pesam mais.
+    score -= (f === "inspectionAt" || f === "tachographAt") ? Math.round(p * 1.8) : p;
+  });
+  score -= recurrentCount * 6;
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  const insp = dateHealth(item.inspectionAt);
+  const taco = dateHealth(item.tachographAt);
+  const factors = [
+    { label: open.length ? `${open.length} avaria${open.length > 1 ? "s" : ""} aberta${open.length > 1 ? "s" : ""}` : "Sem avarias abertas", tone: open.length ? "red" : "green" },
+    { label: `Inspeção ${insp.word}`, tone: insp.tone },
+    { label: `Tacógrafo ${taco.word}`, tone: taco.tone },
+    { label: recurrentCount ? `${recurrentCount} reincidência${recurrentCount > 1 ? "s" : ""}` : "Sem reincidências", tone: recurrentCount ? "yellow" : "green" }
+  ];
+  // Um fator crítico (vermelho) impede o verde, mesmo com pontuação alta.
+  const hasRed = factors.some((f) => f.tone === "red");
+  const tone = hasRed ? (score >= 60 ? "amber" : "red") : (score >= 80 ? "green" : score >= 60 ? "amber" : "red");
+  return { score, tone, factors };
+}
+
 function fleetCard(item, openCount) {
   const dateFields = [
     ["inspectionAt", "Inspeção"],
@@ -3876,6 +3914,13 @@ function fleetCard(item, openCount) {
   const conjuntoLine = item.partnerEquipment
     ? `<p class="fleet-card__conjunto">🔗 Conjunto com <strong>${escapeHtml(partner ? (partner.plate || "—") : ("Equip. " + item.partnerEquipment))}</strong>${partner ? ` · Equip. ${escapeHtml(partner.equipment || "-")}${partner.description ? ` · ${escapeHtml(partner.description)}` : ""}` : ""}</p>`
     : "";
+  const health = computeFleetHealth(item);
+  const healthDot = (t) => t === "red" ? "🔴" : t === "yellow" ? "🟡" : t === "green" ? "🟢" : "⚪";
+  const healthHtml = `
+    <div class="fleet-health fleet-health--${health.tone}">
+      <div class="fleet-health__score"><strong>${health.score}%</strong><span>Saúde</span></div>
+      <ul class="fleet-health__factors">${health.factors.map((f) => `<li>${healthDot(f.tone)} ${escapeHtml(f.label)}</li>`).join("")}</ul>
+    </div>`;
   return `
     <article class="fleet-card">
       <header class="fleet-card__head">
@@ -3889,6 +3934,7 @@ function fleetCard(item, openCount) {
         </div>
       </header>
       ${metaLine ? `<p class="fleet-card__meta">${metaLine}</p>` : ""}
+      ${healthHtml}
       ${badges ? `<div class="fleet-card__badges">${badges}</div>` : ""}
       ${conjuntoLine}
       <div class="fleet-card__controls">
@@ -4330,6 +4376,7 @@ async function deleteFleetItem(equipment) {
 
 function renderAudit() {
   const audit = getFilteredAudit();
+  const allEv = allAuditEvents();
   const maxActive = Math.max(1, ...state.snapshots.map((item) => item.active || 0));
 
   return `
@@ -4367,7 +4414,7 @@ function renderAudit() {
           <div class="chip-filters">
             ${AUDIT_TYPES.map(([v, l]) => {
               const active = (state.filters.auditType || "") === v;
-              const count = v ? state.audit.filter((e) => auditCategory(e) === v).length : state.audit.length;
+              const count = v ? allEv.filter((e) => auditCategory(e) === v).length : allEv.length;
               return `<button type="button" class="chip-filter ${active ? "active" : ""}" data-action="audit-type" data-type="${escapeAttr(v)}">${escapeHtml(l)} (${count})</button>`;
             }).join("")}
           </div>
@@ -5511,6 +5558,8 @@ const AUDIT_TYPES = [
   ["", "Todas"],
   ["avaria", "Avarias"],
   ["frota", "Frota"],
+  ["oficina", "Oficina"],
+  ["reuniao", "Reuniões"],
   ["vistoria", "Vistorias"],
   ["ausencia", "Ausências"]
 ];
@@ -5526,10 +5575,41 @@ const AUDIT_PERIODS = [
 function auditCategory(ev) {
   const id = String(ev.id || "");
   const action = ev.action || "";
-  if (id.startsWith("FROTA-") || action.startsWith("Frota:")) return "frota";
+  const note = ev.note || "";
+  if (id.startsWith("REUNIAO-") || action.startsWith("Reunião")) return "reuniao";
   if (id.startsWith("VISTORIA-") || action.startsWith("Vistoria:")) return "vistoria";
   if (id.startsWith("AUS-") || /aus[êe]ncia/i.test(action)) return "ausencia";
+  if (action.startsWith("Frota: Oficina") || /\boficina\b|pe[çc]as/i.test(`${action} ${note}`)) return "oficina";
+  if (id.startsWith("FROTA-") || action.startsWith("Frota:")) return "frota";
   return "avaria";
+}
+
+// Eventos das reuniões (notas, tarefas, conclusões) trazidos para o Rastreio.
+function meetingAuditEntries() {
+  const out = [];
+  (state.meetings || []).forEach((m) => {
+    const base = m.startedAt || m.endedAt || "";
+    (m.events || []).forEach((e, i) => {
+      const label = e.type === "note" ? "Nota" : e.type === "task" ? "Tarefa"
+        : e.type === "close" ? "Concluída" : e.type === "reopen" ? "Reaberta"
+        : e.type === "update" ? "Atualização" : (e.type || "Evento");
+      out.push({
+        id: `REUNIAO-${m.id}-${i}`,
+        breakdownId: e.breakdownId || "",
+        equipment: e.equipment || "",
+        plate: e.plate || "",
+        at: e.at || base || "",
+        action: `Reunião · ${label}`,
+        status: e.status || "",
+        note: e.summary || e.text || ""
+      });
+    });
+  });
+  return out;
+}
+
+function allAuditEvents() {
+  return state.audit.concat(meetingAuditEntries());
 }
 
 function auditInPeriod(ev, period) {
@@ -5555,12 +5635,14 @@ function getFilteredAudit() {
   const search = normalizeText(state.filters.auditSearch);
   const type = state.filters.auditType || "";
   const period = state.filters.auditPeriod || "";
-  return state.audit.filter((item) => {
-    if (type && auditCategory(item) !== type) return false;
-    if (period && !auditInPeriod(item, period)) return false;
-    const haystack = normalizeText(`${item.breakdownId} ${item.equipment} ${item.plate} ${item.action} ${item.note}`);
-    return !search || haystack.includes(search);
-  });
+  return allAuditEvents()
+    .filter((item) => {
+      if (type && auditCategory(item) !== type) return false;
+      if (period && !auditInPeriod(item, period)) return false;
+      const haystack = normalizeText(`${item.breakdownId} ${item.equipment} ${item.plate} ${item.action} ${item.note}`);
+      return !search || haystack.includes(search);
+    })
+    .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
 }
 
 function sortBreakdownsByDate(list, direction) {

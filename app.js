@@ -2509,6 +2509,11 @@ function renderDashboard() {
         <div class="dash-alerts">${alertsHtml}</div>
       </div>
 
+      <div class="panel dash-block dash-block--wide">
+        <div class="panel-header"><div><p class="eyebrow">Planeamento</p><h2>Próximos 30 dias</h2><p>Inspeções, tacógrafos, revisões, compressor e cubos numa timeline única.</p></div></div>
+        <div class="deadline-list">${timelineHtml}</div>
+      </div>
+
       <div class="panel dash-block">
         <div class="panel-header"><div><p class="eyebrow">Oficina</p><h2>Situação na oficina</h2><p>Distribuição das intervenções em curso.</p></div></div>
         <div class="dash-workshop">
@@ -2517,11 +2522,6 @@ function renderDashboard() {
           ${stateCard("Aguarda peças", ws.waitingParts, "A aguardar peças", { filter: { "filter-key": "situation", "filter-value": "Aguarda peças", "status-value": "" } })}
           ${stateCard("Sem previsão de saída", ws.semPrevisao, "Em oficina sem data de saída")}
         </div>
-      </div>
-
-      <div class="panel dash-block dash-block--wide">
-        <div class="panel-header"><div><p class="eyebrow">Planeamento</p><h2>Próximos 30 dias</h2><p>Inspeções, tacógrafos, revisões, compressor e cubos numa timeline única.</p></div></div>
-        <div class="deadline-list">${timelineHtml}</div>
       </div>
     </section>
   `;

@@ -16,6 +16,7 @@ let remoteFleetHasPartner = true;
 let remoteFleetHasLogisticsResp = true;
 let remoteBreakdownHasOccurrence = true;
 let remoteBreakdownHasDetails = true;
+let remoteBreakdownHasWorkshopExit = true;
 
 // Tipos de ausência de motorista (calendário de ausências, migração 003).
 const ABSENCE_TYPES = ["Férias", "Baixa médica"];
@@ -347,10 +348,8 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "select-breakdown") {
     state.selectedId = button.dataset.id;
-    state.currentView = "meeting";
-    state.meetingView = "work";
     saveState();
-    render();
+    openDetailModal(button.dataset.id);
   }
   if (action === "open-meeting") {
     openMeeting();
@@ -819,6 +818,7 @@ function normalizeBreakdownFields(item) {
     logisticsResp: item.logisticsResp || "",
     recurrentOf: item.recurrentOf || "",
     expectedEntryAt: item.expectedEntryAt || null,
+    workshopExitAt: item.workshopExitAt || null,
     attachments: normalizeAttachments(item.attachments)
   };
 }
@@ -930,6 +930,7 @@ async function loadRemoteState() {
   if (breakdownsResult.data.length) {
     remoteBreakdownHasOccurrence = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "occurrence_number");
     remoteBreakdownHasDetails = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "communicated_at");
+    remoteBreakdownHasWorkshopExit = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "workshop_exit_at");
   }
 
   if (!fleetResult.data.length && !breakdownsResult.data.length) {
@@ -1082,6 +1083,9 @@ function applyRemoteRow(payload, collection, mapper) {
       item.logisticsResp = prev.logisticsResp || item.logisticsResp;
       item.recurrentOf = prev.recurrentOf || item.recurrentOf;
       item.expectedEntryAt = prev.expectedEntryAt || item.expectedEntryAt;
+    }
+    if (collection === "breakdowns" && !remoteBreakdownHasWorkshopExit) {
+      item.workshopExitAt = state.breakdowns[index].workshopExitAt || item.workshopExitAt;
     }
     state[collection][index] = item;
   } else {
@@ -2013,6 +2017,8 @@ function appBreakdownToDb(item) {
     row.recurrent_of = item.recurrentOf || null;
     row.expected_entry_at = item.expectedEntryAt || null;
   }
+  // Saída de oficina (Fatia detalhe) — só envia quando a coluna existe (migração 010).
+  if (remoteBreakdownHasWorkshopExit) row.workshop_exit_at = item.workshopExitAt || null;
   // Ligação à vistoria de origem — só envia as colunas quando existe ligação,
   // para não exigir as colunas nas avarias antigas (sem ligação).
   if (item.vistoriaId) {
@@ -2054,6 +2060,7 @@ function dbBreakdownToApp(row) {
     logisticsResp: row.logistics_resp || "",
     recurrentOf: row.recurrent_of || "",
     expectedEntryAt: row.expected_entry_at || null,
+    workshopExitAt: row.workshop_exit_at || null,
     vistoriaId: row.vistoria_id || "",
     vistoriaItem: row.vistoria_item || "",
     vistoriaSection: row.vistoria_section || "",
@@ -2978,12 +2985,32 @@ function renderMeetingRow(breakdown) {
   `;
 }
 
+function openDetailModal(id) {
+  const b = state.breakdowns.find((x) => String(x.id) === String(id));
+  if (!b) return;
+  openModal(`Ocorrência ${b.occurrenceNumber || ""}`.trim() || "Ocorrência", `<div data-detail-modal>${renderDetail(b)}</div>`, { size: "wide" });
+}
+
+function refreshDetailModal() {
+  const holder = document.querySelector("#modal-root [data-detail-modal]");
+  if (!holder) return;
+  const b = state.breakdowns.find((x) => String(x.id) === String(state.selectedId));
+  if (b) { holder.innerHTML = renderDetail(b); hydrateIcons(); }
+}
+
 function renderDetail(breakdown) {
   if (!breakdown) {
     return '<p class="empty-state">Sem registo selecionado.</p>';
   }
 
   const timeline = parseHistory(breakdown.historyNotes);
+  const vehBucket = vehicleBucketForPlate(breakdown.plate);
+  const typeSet = new Set(String(breakdown.type || "").split(/[;,]/).map((s) => normalizeText(s.trim())).filter(Boolean));
+  const oficinasList = entidadesByCategoria("Oficina");
+  let oficinaOpts = oficinasList.map((o) => `<option value="${escapeAttr(o.empresa)}"${normalizeText(o.empresa) === normalizeText(breakdown.workshop || "") ? " selected" : ""}>${escapeHtml(o.empresa)}</option>`).join("");
+  if (breakdown.workshop && !oficinasList.some((o) => normalizeText(o.empresa) === normalizeText(breakdown.workshop))) {
+    oficinaOpts += `<option value="${escapeAttr(breakdown.workshop)}" selected>${escapeHtml(breakdown.workshop)} (atual)</option>`;
+  }
   return `
     <div class="detail-head">
       <div>
@@ -3004,6 +3031,7 @@ function renderDetail(breakdown) {
       <div><dt>Prev. entrada</dt><dd>${breakdown.expectedEntryAt ? formatDate(breakdown.expectedEntryAt) : "-"}</dd></div>
       <div><dt>Prev. saída</dt><dd>${formatDate(breakdown.expectedExitAt)}</dd></div>
       <div><dt>Entrada oficina</dt><dd>${formatDate(breakdown.workshopEntryAt)}</dd></div>
+      <div><dt>Saída oficina</dt><dd>${formatDate(breakdown.workshopExitAt)}</dd></div>
       <div><dt>Km</dt><dd>${breakdown.km ? escapeHtml(String(breakdown.km)) : "-"}</dd></div>
       <div><dt>Registado por</dt><dd>${escapeHtml(breakdown.registeredBy || "-")}</dd></div>
       <div><dt>Resp. logística</dt><dd>${escapeHtml(breakdown.logisticsResp || "-")}</dd></div>
@@ -3060,6 +3088,10 @@ function renderDetail(breakdown) {
           </select>
         </label>
         <label class="field">
+          <span>Prev. entrada</span>
+          <input type="date" name="expectedEntryAt" value="${escapeAttr(breakdown.expectedEntryAt || "")}">
+        </label>
+        <label class="field">
           <span>Prev. saída</span>
           <input type="date" name="expectedExitAt" value="${escapeAttr(breakdown.expectedExitAt || "")}">
         </label>
@@ -3068,15 +3100,19 @@ function renderDetail(breakdown) {
           <input type="date" name="workshopEntryAt" value="${escapeAttr(breakdown.workshopEntryAt || "")}">
         </label>
         <label class="field">
-          <span>Oficina</span>
-          <input name="workshop" value="${escapeAttr(breakdown.workshop || "")}" placeholder="Oficina">
+          <span>Saída oficina</span>
+          <input type="date" name="workshopExitAt" value="${escapeAttr(breakdown.workshopExitAt || "")}">
         </label>
         <label class="field">
-          <span>Tipo</span>
-          <select name="type">
-            <option value="" ${!breakdown.type ? "selected" : ""}></option>
-            ${options.types.map((type) => `<option value="${escapeAttr(type)}" ${breakdown.type === type ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
+          <span>Oficina</span>
+          <select name="workshop">
+            <option value="">—</option>
+            ${oficinaOpts}
           </select>
+        </label>
+        <label class="field full-span">
+          <span>Tipo de avaria (multi-seleção)</span>
+          <select name="type" multiple size="6">${faultTypeOptionsHtml(vehBucket, typeSet)}</select>
         </label>
         <label class="field">
           <span>Motorista</span>
@@ -4552,10 +4588,12 @@ async function handleQuickUpdate(form, intent) {
 
   breakdown.status = finalStatus;
   breakdown.situation = finalStatus === "Concluido" ? "" : String(data.get("situation") || "").trim();
+  breakdown.expectedEntryAt = emptyToNull(data.get("expectedEntryAt"));
   breakdown.expectedExitAt = emptyToNull(data.get("expectedExitAt"));
   breakdown.workshopEntryAt = emptyToNull(data.get("workshopEntryAt"));
+  breakdown.workshopExitAt = emptyToNull(data.get("workshopExitAt"));
   breakdown.workshop = String(data.get("workshop") || "").trim();
-  breakdown.type = String(data.get("type") || breakdown.type || "").trim();
+  breakdown.type = data.getAll("type").map((s) => String(s).trim()).filter(Boolean).join("; ");
   if (data.has("interventionType")) breakdown.interventionType = String(data.get("interventionType") || breakdown.interventionType || "Corretiva");
   if (data.has("priority")) breakdown.priority = String(data.get("priority") || "");
   breakdown.driver = String(data.get("driver") || "").trim();
@@ -4583,6 +4621,7 @@ async function handleQuickUpdate(form, intent) {
   saveState();
   showToast(intent === "close" ? "Avaria concluída." : intent === "reopen" ? "Ocorrência reaberta." : "Atualização guardada.");
   render();
+  refreshDetailModal();
   if (typeof syncBreakdownToTrello === "function" && trelloNote) {
     syncBreakdownToTrello(breakdown, trelloNote);
   }
@@ -4787,7 +4826,8 @@ async function closeBreakdown(id) {
 }
 
 function appendHistory(breakdown, status, note, date) {
-  const cleanNote = note.trim() || "Atualização registada";
+  // Uma atualização = uma linha = um cartão no histórico: colapsa quebras de linha.
+  const cleanNote = (note || "").trim().replace(/\s*\r?\n\s*/g, " · ") || "Atualização registada";
   const line = `${date}: [${status}] ${cleanNote}`;
   breakdown.historyNotes = [breakdown.historyNotes, line].filter(Boolean).join("\n");
   breakdown.lastNote = cleanNote;
@@ -5064,16 +5104,18 @@ function vehicleBucketForPlate(plate) {
   return f && isTratorFleet(f) ? "Trator" : "Reboque";
 }
 
-function faultTypeOptionsHtml(vehicleType) {
+function faultTypeOptionsHtml(vehicleType, selectedSet) {
+  const sel = selectedSet instanceof Set ? selectedSet : null;
+  const isSel = (name) => (sel && sel.has(normalizeText(name))) ? " selected" : "";
   const groups = faultTypeGroups(vehicleType);
   if (!groups.size) {
     return `<option value="" disabled>Sem tipos definidos para ${escapeHtml(vehicleType)} — configure em Frota › Definições</option>` +
-      options.types.map((t) => `<option value="${escapeAttr(t)}">${escapeHtml(t)}</option>`).join("");
+      options.types.map((t) => `<option value="${escapeAttr(t)}"${isSel(t)}>${escapeHtml(t)}</option>`).join("");
   }
   let html = "";
   for (const [grupo, items] of groups) {
     html += `<optgroup label="${escapeAttr(grupo || "Outros")}">` +
-      items.map((t) => `<option value="${escapeAttr(t.nome)}" data-prio="${escapeAttr(t.suggestedPriority || "")}">${escapeHtml(t.nome)}${t.hint ? ` — ${escapeHtml(t.hint)}` : ""}</option>`).join("") +
+      items.map((t) => `<option value="${escapeAttr(t.nome)}"${isSel(t.nome)} data-prio="${escapeAttr(t.suggestedPriority || "")}">${escapeHtml(t.nome)}${t.hint ? ` — ${escapeHtml(t.hint)}` : ""}</option>`).join("") +
       `</optgroup>`;
   }
   return html;

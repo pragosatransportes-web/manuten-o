@@ -142,22 +142,23 @@ button { cursor: pointer; }
 }
 
 .view-tabs button {
-  min-height: 36px;
-  padding: 6px 14px;
-  border: 1px solid transparent;
+  min-height: 44px;
+  padding: 10px 20px;
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   color: var(--muted);
-  background: transparent;
-  font-size: 13px;
-  font-weight: 500;
+  background: var(--surface);
+  font-size: 14.5px;
+  font-weight: 600;
   white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
   transition: background 120ms, color 120ms, border-color 120ms, box-shadow 120ms;
 }
 
 .view-tabs button:hover {
   color: var(--ink);
   background: var(--surface);
-  border-color: var(--line);
+  border-color: var(--line-strong);
 }
 
 .view-tabs button.active {
@@ -1112,7 +1113,7 @@ body.modal-open { overflow: hidden; }
 /* ---- Sub-navegação (2º nível das 5 áreas) ---- */
 .subview-nav { display: flex; gap: 2px; overflow-x: auto; padding: 0 2px 8px; margin-top: -4px; }
 .subview-nav[hidden] { display: none; }
-.subview-nav button { min-height: 32px; padding: 5px 12px; border: none; background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 500; white-space: nowrap; cursor: pointer; border-bottom: 2px solid transparent; border-radius: 0; transition: color 120ms, border-color 120ms; }
+.subview-nav button { min-height: 40px; padding: 8px 18px; border: none; background: transparent; color: var(--muted); font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer; border-bottom: 2px solid transparent; border-radius: 0; transition: color 120ms, border-color 120ms; }
 .subview-nav button:hover { color: var(--ink); }
 .subview-nav button.active { color: var(--accent-strong); border-bottom-color: var(--accent); font-weight: 600; }
 

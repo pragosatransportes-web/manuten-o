@@ -281,7 +281,9 @@ document.addEventListener("click", async (event) => {
     // "Nova ocorrência" abre agora em janela modal (não é uma vista).
     if (view === "new") { state.avariaFromVistoria = null; openOccurrenceModal(); return; }
     state.avariaFromVistoria = null;
-    state.filters.fleetScope = ""; // navegação normal para a Frota mostra tudo (o âmbito vem só do Dashboard)
+    // Navegação "limpa": cada separador abre sem os filtros do anterior. Os filtros
+    // do Dashboard usam ações próprias (dashboard-filter/dashboard-fleet) e não passam por aqui.
+    resetBrowseFilters();
     // Ao clicar no separador Reunião: workspace se houver reunião a decorrer, senão o ecrã inicial.
     if (view === "meeting") state.meetingView = getActiveMeeting() ? "work" : "home";
     state.currentView = view;
@@ -3610,7 +3612,7 @@ function openOccurrenceModal() {
             <input type="date" name="reportedAt" value="${today}" required>
           </label>
           <label class="field">Data de comunicação
-            <input type="date" name="communicatedAt">
+            <input type="date" name="communicatedAt" value="${today}">
           </label>
         </div>
         <div class="field-row">
@@ -5910,6 +5912,17 @@ function findFleetByPlate(value) {
   const plate = normalizePlate(value);
   if (!plate) return null;
   return state.fleet.find((item) => normalizePlate(item.plate) === plate) || null;
+}
+
+function resetBrowseFilters() {
+  Object.assign(state.filters, {
+    search: "", status: [], situation: [], type: [], company: [],
+    workshopType: "", semPrevisao: false, occurrenceStale: false, occurrenceStage: "",
+    fleetSearch: "", fleetScope: "",
+    auditSearch: "", auditType: "", auditPeriod: "",
+    entidadeSearch: "", entidadeCategoria: "",
+    ausenciaSearch: "", vistoriaType: "", vistoriaResult: ""
+  });
 }
 
 function setFilter(name, value) {

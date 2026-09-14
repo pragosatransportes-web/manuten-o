@@ -2388,7 +2388,7 @@ function editMeetingEventFromReport(meetingId, eventId) {
 // Navegação em 2 níveis: 5 áreas, cada uma com as suas secções (redesign ARGOS).
 const NAV_GROUPS = [
   { id: "dashboard", label: "Dashboard", views: [["dashboard", "Dashboard"]] },
-  { id: "manutencao", label: "Manutenção", views: [["breakdowns", "Ocorrências"], ["gantt", "Planeamento"], ["new", "Nova ocorrência"], ["meeting", "Reuniões"]] },
+  { id: "manutencao", label: "Manutenção", views: [["gantt", "Planeamento"], ["breakdowns", "Ocorrências"], ["meeting", "Reuniões"]] },
   { id: "frota", label: "Frota", views: [["fleet", "Viaturas"], ["vistoria", "Vistorias"], ["definicoes", "Definições"]] },
   { id: "entidades", label: "Entidades", views: [["entidades", "Entidades"], ["ausencias", "Ausências"]] },
   { id: "analise", label: "Análise", views: [["audit", "Rastreio"]] }
@@ -3243,13 +3243,22 @@ const GANTT_WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 function ganttAnchorISO() { return state.ganttAnchor || todayISO(); }
 function ganttKeyDate(b) { return String(b.expectedEntryAt || b.reportedAt || "").slice(0, 10); }
+// Dias abrangidos por uma intervenção: da entrada prevista/abertura à saída prevista.
+function ganttSpanDays(b) {
+  const entry = ganttKeyDate(b);
+  if (!entry) return [];
+  let exit = String(b.expectedExitAt || "").slice(0, 10);
+  if (!exit || exit < entry) exit = entry;
+  const days = [];
+  let cur = entry, i = 0;
+  while (cur <= exit && i < 120) { days.push(cur); cur = isoAddDays(cur, 1); i++; }
+  return days;
+}
 function ganttActiveByDate() {
   const map = {};
   state.breakdowns.forEach((b) => {
     if (b.status === "Concluido") return;
-    const k = ganttKeyDate(b);
-    if (!k) return;
-    (map[k] = map[k] || []).push(b);
+    ganttSpanDays(b).forEach((k) => { (map[k] = map[k] || []).push(b); });
   });
   return map;
 }
@@ -3349,7 +3358,21 @@ function renderGantt() {
       </div>`;
   }
 
-  const prev = getFleetDateAlerts().filter((a) => Number.isFinite(a.days) && a.days >= 0 && a.days <= 90);
+  const prevAll = getFleetDateAlerts()
+    .filter((a) => Number.isFinite(a.days) && a.days >= 0 && a.days <= 90)
+    .sort((a, b) => (a.plate || "").localeCompare(b.plate || "", "pt", { numeric: true }));
+  const isPrevTrator = (item) => {
+    const f = state.fleet.find((x) => String(x.equipment) === String(item.equipment));
+    return f ? isTratorFleet(f) : false;
+  };
+  const prevTr = prevAll.filter(isPrevTrator);
+  const prevRb = prevAll.filter((x) => !isPrevTrator(x));
+  const prevRow = (item) => `
+    <article class="deadline-row">
+      <div><strong>${escapeHtml(item.plate || "-")} · Equip. ${escapeHtml(item.equipment)}</strong><span>${escapeHtml(item.label)} · ${escapeHtml(formatDate(item.date))}</span></div>
+      ${renderDueBadge(item.date)}
+    </article>`;
+  const prevBlock = (title, list) => `<h3 class="deadline-subhead">${escapeHtml(title)} (${list.length})</h3>${list.length ? list.map(prevRow).join("") : '<p class="empty-state">Sem preventivas nos próximos 3 meses.</p>'}`;
 
   return `
     <section class="page-grid">
@@ -3375,11 +3398,8 @@ function renderGantt() {
       <div class="panel">
         <div class="panel-header"><div><p class="eyebrow">Frota</p><h2>Próximas preventivas</h2><p>Inspeções, tacógrafos, revisões e aferições nos próximos 3 meses.</p></div></div>
         <div class="deadline-list">
-          ${prev.length ? prev.map((item) => `
-            <article class="deadline-row">
-              <div><strong>Equip. ${escapeHtml(item.equipment)} · ${escapeHtml(item.plate || "-")}</strong><span>${escapeHtml(item.label)} · ${escapeHtml(formatDate(item.date))}</span></div>
-              ${renderDueBadge(item.date)}
-            </article>`).join("") : '<p class="empty-state">Sem preventivas nos próximos 3 meses.</p>'}
+          ${prevBlock("Tratores", prevTr)}
+          ${prevBlock("Reboques e outros", prevRb)}
         </div>
       </div>
     </section>`;

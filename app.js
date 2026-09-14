@@ -281,6 +281,7 @@ document.addEventListener("click", async (event) => {
     // "Nova ocorrência" abre agora em janela modal (não é uma vista).
     if (view === "new") { state.avariaFromVistoria = null; openOccurrenceModal(); return; }
     state.avariaFromVistoria = null;
+    state.filters.fleetScope = ""; // navegação normal para a Frota mostra tudo (o âmbito vem só do Dashboard)
     // Ao clicar no separador Reunião: workspace se houver reunião a decorrer, senão o ecrã inicial.
     if (view === "meeting") state.meetingView = getActiveMeeting() ? "work" : "home";
     state.currentView = view;
@@ -312,18 +313,33 @@ document.addEventListener("click", async (event) => {
     const filterKey   = button.dataset.filterKey;
     const filterValue = button.dataset.filterValue;
     const statusValue = button.dataset.statusValue || "";
+    const stage       = button.dataset.stage || "";
     // Reset all filters first
-    state.filters.search    = "";
-    state.filters.status    = statusValue ? [statusValue] : [];
-    state.filters.situation = [];
-    state.filters.type      = [];
-    state.filters.company   = [];
+    state.filters.search       = "";
+    state.filters.status       = statusValue ? [statusValue] : [];
+    state.filters.situation    = [];
+    state.filters.type         = [];
+    state.filters.company      = [];
+    state.filters.workshopType = "";
+    state.filters.semPrevisao  = false;
+    state.filters.occurrenceStale = false;
+    state.filters.occurrenceStage = stage;
     // Apply the specific filter for this card
-    if (filterKey === "search")    state.filters.search    = filterValue;
-    if (filterKey === "situation") state.filters.situation = [filterValue];
-    if (filterKey === "status")    state.filters.status    = [filterValue];
-    if (filterKey === "type")      state.filters.type      = [filterValue];
+    if (filterKey === "search")      state.filters.search       = filterValue;
+    if (filterKey === "situation")   state.filters.situation    = [filterValue];
+    if (filterKey === "status")      state.filters.status       = [filterValue];
+    if (filterKey === "type")        state.filters.type         = [filterValue];
+    if (filterKey === "workshop")    state.filters.workshopType = filterValue;
+    if (filterKey === "semprevisao") state.filters.semPrevisao  = true;
+    if (filterKey === "stale")       state.filters.occurrenceStale = true;
     state.currentView = "breakdowns";
+    saveState();
+    render();
+  }
+  if (action === "dashboard-fleet") {
+    state.filters.fleetScope  = button.dataset.scope || "";
+    state.filters.fleetSearch = "";
+    state.currentView = "fleet";
     saveState();
     render();
   }
@@ -416,6 +432,11 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "fleet-view") {
     state.fleetView = button.dataset.mode === "table" ? "table" : "cards";
+    saveState();
+    render();
+  }
+  if (action === "fleet-scope-clear") {
+    state.filters.fleetScope = "";
     saveState();
     render();
   }
@@ -733,7 +754,11 @@ function makeInitialState() {
       situation: [],
       type: [],
       company: [],
+      workshopType: "",
+      semPrevisao: false,
+      occurrenceStale: false,
       fleetSearch: "",
+      fleetScope: "",
       auditSearch: "",
       auditType: "",
       auditPeriod: "",
@@ -2453,11 +2478,21 @@ function renderDashboard() {
   const st = getDashboardState();
   const alerts = getImmediateAlerts();
   const ws = getWorkshopBreakdown();
-  const next30 = getFleetDateAlerts().filter((a) => Number.isFinite(a.days) && a.days >= 0 && a.days <= 30);
+  const next30 = getFleetDateAlerts()
+    .filter((a) => Number.isFinite(a.days) && a.days >= 0 && a.days <= 30)
+    .sort((a, b) => (a.plate || "").localeCompare(b.plate || "", "pt", { numeric: true }));
+  const schedForPlate = (plate) => {
+    const p = normalizePlate(plate || "");
+    if (!p) return null;
+    return state.breakdowns.find((b) => b.status !== "Concluido" && normalizeText(b.interventionType) === "preventiva" && normalizePlate(b.plate) === p) || null;
+  };
 
   const stateCard = (label, value, detail, opts = {}) => {
     const cls = opts.tone ? ` dash-stat--${opts.tone}` : "";
     const body = `<span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong><em>${escapeHtml(detail)}</em>`;
+    if (opts.fleetScope) {
+      return `<button type="button" class="dash-stat dash-stat--btn${cls}" data-action="dashboard-fleet" data-scope="${escapeAttr(opts.fleetScope)}" title="Ver ${escapeAttr(label)}">${body}</button>`;
+    }
     if (opts.view) {
       return `<button type="button" class="dash-stat dash-stat--btn${cls}" data-view="${escapeAttr(opts.view)}" title="Abrir ${escapeAttr(label)}">${body}</button>`;
     }
@@ -2472,6 +2507,7 @@ function renderDashboard() {
     ? alerts.map((a) => {
         const inner = `<span class="dash-alert__dot">🔴</span><span class="dash-alert__txt"><strong>${escapeHtml(String(a.count))}</strong> ${escapeHtml(a.label)}</span>`;
         if (a.view) return `<button type="button" class="dash-alert" data-view="${escapeAttr(a.view)}">${inner}<span class="dash-alert__cta">Ver →</span></button>`;
+        if (a.fleetScope) return `<button type="button" class="dash-alert" data-action="dashboard-fleet" data-scope="${escapeAttr(a.fleetScope)}">${inner}<span class="dash-alert__cta">Ver →</span></button>`;
         if (a.filter) {
           const attrs = Object.entries(a.filter).map(([k, v]) => `data-${k}="${escapeAttr(v)}"`).join(" ");
           return `<button type="button" class="dash-alert" data-action="dashboard-filter" ${attrs}>${inner}<span class="dash-alert__cta">Ver →</span></button>`;
@@ -2481,14 +2517,21 @@ function renderDashboard() {
     : `<div class="dash-alert dash-alert--ok"><span class="dash-alert__dot">🟢</span><span class="dash-alert__txt">Sem alertas críticos. Tudo em ordem.</span></div>`;
 
   const timelineHtml = next30.length
-    ? next30.map((item) => `
-        <article class="deadline-row">
+    ? next30.map((item) => {
+        const s = schedForPlate(item.plate);
+        const schedTag = s
+          ? `<span class="deadline-sched deadline-sched--has" title="Intervenção preventiva já criada">${escapeHtml(s.occurrenceNumber || "Agendado")}</span>`
+          : `<span class="deadline-sched deadline-sched--none">Sem agendamentos criados</span>`;
+        return `
+        <article class="deadline-row deadline-card">
           <div>
-            <strong>Equip. ${escapeHtml(item.equipment)} · ${escapeHtml(item.plate || "-")}</strong>
+            <strong>${escapeHtml(item.plate || "-")} · Equip. ${escapeHtml(item.equipment)}</strong>
             <span>${escapeHtml(item.label)} · ${escapeHtml(formatDate(item.date))}</span>
+            ${schedTag}
           </div>
           ${renderDueBadge(item.date)}
-        </article>`).join("")
+        </article>`;
+      }).join("")
     : '<p class="empty-state">Sem prazos de frota nos próximos 30 dias.</p>';
 
   return `
@@ -2496,7 +2539,7 @@ function renderDashboard() {
       <div class="panel dash-block dash-block--wide">
         <div class="panel-header"><div><p class="eyebrow">Frota</p><h2>Estado atual da frota</h2><p>Fotografia operacional do momento.</p></div></div>
         <div class="dash-state-grid">
-          ${stateCard("Viaturas ativas", st.totalFleet, "Total de viaturas ativas", { view: "fleet" })}
+          ${stateCard("Viaturas ativas", st.totalFleet, "Total de viaturas ativas", { fleetScope: "ativas" })}
           ${stateCard("Em oficina", st.inWorkshop, "Avarias com viatura em oficina", { filter: { "filter-key": "situation", "filter-value": "Em oficina", "status-value": "" }, tone: "amber" })}
           ${stateCard("Paradas", st.stopped, "Viaturas paradas por avaria", { filter: { "filter-key": "status", "filter-value": "Parado", "status-value": "" }, tone: "red" })}
           ${stateCard("Aguarda peças", st.waitingParts, "Avarias a aguardar peças", { filter: { "filter-key": "situation", "filter-value": "Aguarda peças", "status-value": "" }, tone: "amber" })}
@@ -2509,19 +2552,19 @@ function renderDashboard() {
         <div class="dash-alerts">${alertsHtml}</div>
       </div>
 
-      <div class="panel dash-block dash-block--wide">
-        <div class="panel-header"><div><p class="eyebrow">Planeamento</p><h2>Próximos 30 dias</h2><p>Inspeções, tacógrafos, revisões, compressor e cubos numa timeline única.</p></div></div>
-        <div class="deadline-list">${timelineHtml}</div>
-      </div>
-
       <div class="panel dash-block">
         <div class="panel-header"><div><p class="eyebrow">Oficina</p><h2>Situação na oficina</h2><p>Distribuição das intervenções em curso.</p></div></div>
         <div class="dash-workshop">
-          ${stateCard("Interna", ws.interna, "Em oficina interna", { filter: { "filter-key": "search", "filter-value": "Interna", "status-value": "" } })}
-          ${stateCard("Externa", ws.externa, "Em oficina externa", { filter: { "filter-key": "search", "filter-value": "Externa", "status-value": "" } })}
-          ${stateCard("Aguarda peças", ws.waitingParts, "A aguardar peças", { filter: { "filter-key": "situation", "filter-value": "Aguarda peças", "status-value": "" } })}
-          ${stateCard("Sem previsão de saída", ws.semPrevisao, "Em oficina sem data de saída")}
+          ${stateCard("Interna", ws.interna, "Em oficina interna", { filter: { "filter-key": "workshop", "filter-value": "Interna", "stage": "curso" } })}
+          ${stateCard("Externa", ws.externa, "Em oficina externa", { filter: { "filter-key": "workshop", "filter-value": "Externa", "stage": "curso" } })}
+          ${stateCard("Aguarda peças", ws.waitingParts, "A aguardar peças", { filter: { "filter-key": "situation", "filter-value": "Aguarda peças", "stage": "curso" } })}
+          ${stateCard("Sem previsão de saída", ws.semPrevisao, "Em oficina sem data de saída", { filter: { "filter-key": "semprevisao", "filter-value": "1", "stage": "curso" } })}
         </div>
+      </div>
+
+      <div class="panel dash-block dash-block--wide">
+        <div class="panel-header"><div><p class="eyebrow">Planeamento</p><h2>Próximos 30 dias</h2><p>Inspeções, tacógrafos, revisões, compressor e cubos numa timeline única.</p></div></div>
+        <div class="deadline-list">${timelineHtml}</div>
       </div>
     </section>
   `;
@@ -2530,7 +2573,8 @@ function renderDashboard() {
 function getDashboardState() {
   const active = state.breakdowns.filter((b) => b.status !== "Concluido");
   const totalFleet = state.fleet.filter((f) => f.status === "Ativa").length || state.fleet.length;
-  const stopped = active.filter((b) => b.status === "Parado").length;
+  // Paradas = viaturas distintas paradas (uma viatura pode ter várias ocorrências).
+  const stopped = new Set(active.filter((b) => b.status === "Parado").map((b) => normalizePlate(b.plate) || String(b.equipment))).size;
   const inWorkshop = active.filter((b) => b.situation === "Em oficina").length;
   const waitingParts = active.filter((b) => b.situation === "Aguarda peças").length;
   const availability = totalFleet ? Math.round(((totalFleet - stopped) / totalFleet) * 100) : 0;
@@ -2539,7 +2583,7 @@ function getDashboardState() {
 
 function getImmediateAlerts() {
   const active = state.breakdowns.filter((b) => b.status !== "Concluido");
-  const stopped = active.filter((b) => b.status === "Parado").length;
+  const stopped = new Set(active.filter((b) => b.status === "Parado").map((b) => normalizePlate(b.plate) || String(b.equipment))).size;
   const inspExpired = state.fleet.filter((f) => f.inspectionAt && !isFleetNA(f.inspectionAt) && daysUntil(f.inspectionAt) < 0).length;
   const tacoExpired = state.fleet.filter((f) => f.tachographAt && !isFleetNA(f.tachographAt) && daysUntil(f.tachographAt) < 0).length;
   const stale = active.filter((b) => {
@@ -2549,9 +2593,9 @@ function getImmediateAlerts() {
 
   const list = [];
   if (stopped) list.push({ count: stopped, label: stopped === 1 ? "viatura parada" : "viaturas paradas", filter: { "filter-key": "status", "filter-value": "Parado", "status-value": "" } });
-  if (inspExpired) list.push({ count: inspExpired, label: inspExpired === 1 ? "inspeção vencida" : "inspeções vencidas", view: "fleet" });
-  if (tacoExpired) list.push({ count: tacoExpired, label: tacoExpired === 1 ? "tacógrafo vencido" : "tacógrafos vencidos", view: "fleet" });
-  if (stale) list.push({ count: stale, label: "avarias sem atualização há mais de 7 dias", view: "breakdowns" });
+  if (inspExpired) list.push({ count: inspExpired, label: inspExpired === 1 ? "inspeção vencida" : "inspeções vencidas", fleetScope: "inspecao-vencida" });
+  if (tacoExpired) list.push({ count: tacoExpired, label: tacoExpired === 1 ? "tacógrafo vencido" : "tacógrafos vencidos", fleetScope: "tacografo-vencido" });
+  if (stale) list.push({ count: stale, label: "avarias sem atualização há mais de 7 dias", filter: { "filter-key": "stale", "filter-value": "1", "status-value": "" } });
   return list;
 }
 
@@ -3708,6 +3752,13 @@ function repopulatePlateOptions(descFilter) {
   if (equipment) equipment.value = "";
 }
 
+function fleetScopeLabel(scope) {
+  return scope === "ativas" ? "apenas viaturas ativas"
+    : scope === "inspecao-vencida" ? "inspeções vencidas"
+    : scope === "tacografo-vencido" ? "tacógrafos vencidos"
+    : scope;
+}
+
 function renderFleet() {
   const activeCounts = state.breakdowns.reduce((acc, item) => {
     if (item.status !== "Concluido") acc[item.equipment] = (acc[item.equipment] || 0) + 1;
@@ -3791,6 +3842,7 @@ function renderFleet() {
           <button type="button" class="${fleetView === "table" ? "active" : ""}" data-action="fleet-view" data-mode="table">Tabela</button>
         </div>
       </div>
+      ${state.filters.fleetScope ? `<div class="fleet-scope-note">A filtrar: <strong>${escapeHtml(fleetScopeLabel(state.filters.fleetScope))}</strong> <button type="button" class="link-button" data-action="fleet-scope-clear">✕ limpar</button></div>` : ""}
       <datalist id="fleet-resploglist">${respLogSuggestions().map((n) => `<option value="${escapeAttr(n)}"></option>`).join("")}</datalist>
       ${fleetView === "table" ? renderFleetTable(list, activeCounts) : renderFleetCards(list, activeCounts)}
     </section>
@@ -5537,6 +5589,13 @@ function getFilteredBreakdowns(activeOnly) {
   if (situationF.length) list = list.filter((item) => situationF.includes(item.situation));
   if (typeF.length) list = list.filter((item) => typeF.includes(item.type));
   if (companyF.length) list = list.filter((item) => companyF.includes(getBreakdownCompany(item)));
+  if (state.filters.workshopType) list = list.filter((item) => normalizeText(item.workshopType) === normalizeText(state.filters.workshopType));
+  if (state.filters.semPrevisao) list = list.filter((item) => item.status !== "Concluido" && item.situation === "Em oficina" && !item.expectedExitAt);
+  if (state.filters.occurrenceStale) list = list.filter((item) => {
+    if (item.status === "Concluido") return false;
+    const ref = (item.lastNoteAt || item.reportedAt || "").slice(0, 10);
+    return ref && daysBetween(ref, todayISO()) > 7;
+  });
   if (search) {
     list = list.filter((item) => {
       const haystack = normalizeText(`${item.id} ${item.equipment} ${item.plate} ${item.type} ${item.status} ${item.situation} ${item.workshop} ${item.description} ${item.lastNote} ${formatAttachmentNames(item.attachments)}`);
@@ -5547,9 +5606,15 @@ function getFilteredBreakdowns(activeOnly) {
 }
 
 function getFilteredFleet() {
-  const search = normalizeText(state.filters.fleetSearch);
+  const nohyphen = (s) => normalizeText(s).replace(/[-\s]/g, "");
+  const search = nohyphen(state.filters.fleetSearch);
+  const scope = state.filters.fleetScope || "";
   return state.fleet.filter((item) => {
-    const haystack = normalizeText(`${item.equipment} ${item.plate} ${item.description} ${item.brand} ${item.status} ${item.fleetCompany}`);
+    if (scope === "ativas" && normalizeText(item.status) !== "ativa") return false;
+    if (scope === "inspecao-vencida" && !(item.inspectionAt && !isFleetNA(item.inspectionAt) && daysUntil(item.inspectionAt) < 0)) return false;
+    if (scope === "tacografo-vencido" && !(item.tachographAt && !isFleetNA(item.tachographAt) && daysUntil(item.tachographAt) < 0)) return false;
+    // Pesquisa tolerante ao hífen (BE09MB encontra BE-09-MB e vice-versa).
+    const haystack = nohyphen(`${item.equipment} ${item.plate} ${item.description} ${item.brand} ${item.status} ${item.fleetCompany}`);
     return !search || haystack.includes(search);
   });
 }

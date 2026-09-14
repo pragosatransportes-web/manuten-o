@@ -440,6 +440,12 @@ document.addEventListener("click", async (event) => {
     saveState();
     render();
   }
+  if (action === "new-fleet-modal") {
+    openFleetModal();
+  }
+  if (action === "new-ausencia-modal") {
+    openAusenciaModal();
+  }
   if (action === "fleet-logisticsresp-conjunto") {
     await applyLogisticsRespToConjunto(button.dataset.equipment);
   }
@@ -588,6 +594,9 @@ document.addEventListener("change", async (event) => {
   }
   if (target.dataset.fleetLogisticsresp) {
     await updateFleetLogisticsResp(target.dataset.equipment, target.value);
+  }
+  if (target.dataset.fleetStatus) {
+    await updateFleetStatus(target.dataset.equipment, target.value);
   }
   if (target.dataset.faultPriority) {
     await updateFaultTypePriority(target.dataset.id, target.value);
@@ -3797,64 +3806,11 @@ function renderFleet() {
           <h2>Viaturas</h2>
           <p>${list.length} registos encontrados</p>
         </div>
-        ${(typeof trelloSettings !== "undefined" && trelloSettings.key) ? `
-        <button class="ghost-button" type="button" data-action="import-drivers-trello"
-          title="Importar o motorista de cada viatura a partir do cartão &quot;motorista associado&quot; no Trello">
-          <span data-icon="rotate"></span>
-          <span>Importar motoristas (Trello)</span>
-        </button>` : ""}
+        <div class="panel-header__actions">
+          ${(typeof trelloSettings !== "undefined" && trelloSettings.key) ? `<button class="ghost-button" type="button" data-action="import-drivers-trello" title="Importar o motorista de cada viatura a partir do cartão &quot;motorista associado&quot; no Trello"><span data-icon="rotate"></span><span>Importar motoristas (Trello)</span></button>` : ""}
+          <button class="primary-button" type="button" data-action="new-fleet-modal"><span data-icon="plus"></span><span>Adicionar viatura</span></button>
+        </div>
       </div>
-      <details class="fleet-add">
-        <summary><span data-icon="plus"></span> Adicionar viatura</summary>
-        <form class="data-form" data-form="new-fleet">
-          <div class="form-grid">
-            <label class="field">
-              <span>Equipamento</span>
-              <input name="equipment" required placeholder="N.º equipamento">
-            </label>
-            <label class="field">
-              <span>Matrícula</span>
-              <input name="plate" required placeholder="AA-00-AA">
-            </label>
-            <label class="field">
-              <span>Descrição</span>
-              <input name="description" required placeholder="Ex.: Camião basculante">
-            </label>
-            <label class="field">
-              <span>Marca</span>
-              <input name="brand">
-            </label>
-            <label class="field">
-              <span>Ano</span>
-              <input name="year" type="number" min="1980" max="2100">
-            </label>
-            <label class="field">
-              <span>Estado</span>
-              <select name="status">
-                ${fleetStatuses.map((status) => `<option value="${escapeAttr(status)}" ${status === "Ativa" ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}
-              </select>
-            </label>
-            <label class="field">
-              <span>Empresa</span>
-              <select name="fleetCompany">
-                <option value=""></option>
-                <option value="CPSA">CPSA</option>
-                <option value="PTSA">PTSA</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Motorista</span>
-              <input name="driver" placeholder="Motorista responsável">
-            </label>
-          </div>
-          <div class="form-actions">
-            <button class="primary-button" type="submit">
-              <span data-icon="plus"></span>
-              <span>Criar viatura</span>
-            </button>
-          </div>
-        </form>
-      </details>
       <div class="toolbar fleet-toolbar">
         <input type="search" data-filter="fleetSearch" value="${escapeAttr(state.filters.fleetSearch)}" placeholder="Pesquisar equipamento, matrícula ou marca">
         <div class="fleet-viewtoggle" role="group" aria-label="Modo de visualização">
@@ -4014,6 +3970,7 @@ function fleetCard(item, openCount) {
         <label class="fleet-mini"><span>Oficina preferencial</span>${renderFleetOficinaCell(item)}</label>
         <label class="fleet-mini"><span>Resp. logística${item.partnerEquipment ? ` <button type="button" class="link-button" data-action="fleet-logisticsresp-conjunto" data-equipment="${escapeAttr(item.equipment)}" title="Aplicar o mesmo responsável ao outro veículo do conjunto">↔ conjunto</button>` : ""}</span>${renderFleetLogisticsCell(item)}</label>
         <label class="fleet-mini"><span>Conjunto (trator/reboque)</span>${renderFleetPartnerCell(item)}</label>
+        <label class="fleet-mini admin-only"><span>Estado (admin)</span>${renderFleetStatusCell(item)}</label>
       </div>
       <footer class="fleet-card__foot">
         <button class="icon-button" type="button" data-action="delete-fleet" data-equipment="${escapeAttr(item.equipment)}" title="Remover viatura"><span data-icon="trash"></span></button>
@@ -4347,6 +4304,62 @@ async function applyLogisticsRespToConjunto(equipment) {
   });
 }
 
+function fleetStatusList() {
+  return seed.options?.fleetStatuses || ["Ativa", "Manutencao preventiva", "Vendida", "Abatida", "Cedida", "Inativa", "Alugada"];
+}
+
+function openFleetModal() {
+  const statuses = fleetStatusList();
+  const body = `
+    <form class="modal-form" data-form="new-fleet">
+      <div class="field-row">
+        <label class="field">Equipamento *<input name="equipment" required placeholder="N.º equipamento"></label>
+        <label class="field">Matrícula *<input name="plate" required placeholder="AA-00-AA"></label>
+      </div>
+      <label class="field field--wide">Descrição *<input name="description" required placeholder="Ex.: Camião basculante"></label>
+      <div class="field-row">
+        <label class="field">Marca<input name="brand"></label>
+        <label class="field">Ano<input name="year" type="number" min="1980" max="2100"></label>
+      </div>
+      <div class="field-row">
+        <label class="field">Estado<select name="status">${statuses.map((s) => `<option value="${escapeAttr(s)}"${s === "Ativa" ? " selected" : ""}>${escapeHtml(s)}</option>`).join("")}</select></label>
+        <label class="field">Empresa<select name="fleetCompany"><option value=""></option><option value="CPSA">CPSA</option><option value="PTSA">PTSA</option></select></label>
+      </div>
+      <label class="field field--wide">Motorista<input name="driver" placeholder="Motorista responsável"></label>
+      <div class="modal-form__actions">
+        <button type="button" class="ghost-button" data-action="close-modal">Cancelar</button>
+        <button type="submit" class="primary-button"><span data-icon="plus"></span><span>Criar viatura</span></button>
+      </div>
+    </form>`;
+  openModal("Adicionar viatura", body);
+}
+
+function renderFleetStatusCell(item) {
+  const statuses = fleetStatusList();
+  const cur = item.status || "";
+  const opts = statuses.map((s) => `<option value="${escapeAttr(s)}"${normalizeText(s) === normalizeText(cur) ? " selected" : ""}>${escapeHtml(s)}</option>`);
+  if (cur && !statuses.some((s) => normalizeText(s) === normalizeText(cur))) opts.unshift(`<option value="${escapeAttr(cur)}" selected>${escapeHtml(cur)}</option>`);
+  return `<select data-equipment="${escapeAttr(item.equipment)}" data-fleet-status="true" aria-label="Estado equip. ${escapeAttr(item.equipment)}">${opts.join("")}</select>`;
+}
+
+async function updateFleetStatus(equipment, value) {
+  if (!requireAdmin()) { render(); return; }
+  const item = state.fleet.find((f) => String(f.equipment) === String(equipment));
+  if (!item) return;
+  const previous = item.status || "";
+  const next = String(value || "").trim();
+  if (next === previous) return;
+  item.status = next;
+  const auditEvent = logFleetAudit(item, "status", previous, next);
+  saveState();
+  showToast("Estado da viatura guardado.");
+  render();
+  await persistRemoteSafely(async () => {
+    await persistFleetRemote(item);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
 async function handleNewFleet(form) {
   const data = new FormData(form);
   const equipmentInput = String(data.get("equipment") || "").trim();
@@ -4390,6 +4403,7 @@ async function handleNewFleet(form) {
 
   state.fleet.push(item);
   state.fleet.sort((a, b) => String(a.equipment).localeCompare(String(b.equipment), undefined, { numeric: true }));
+  closeModal();
   const auditEvent = {
     id: `FROTA-${equipment}-criada-${Date.now()}`,
     breakdownId: "",
@@ -4803,7 +4817,10 @@ function logFleetAudit(item, field, previous, next) {
     compressorReviewAt: "Data de revisão compressor",
     wheelHubReviewAt: "Data revisão cubos de roda",
     revisionAt: "Data de revisão",
-    preferredWorkshop: "Oficina preferencial"
+    preferredWorkshop: "Oficina preferencial",
+    status: "Estado",
+    partnerEquipment: "Conjunto",
+    logisticsResp: "Resp. logística"
   };
   const auditEvent = {
     id: `FROTA-${item.equipment}-${field}-${Date.now()}`,
@@ -5268,30 +5285,10 @@ function renderAusencias() {
           <h2>Calendário de ausências</h2>
           <p>${list.length} ausência(s) registada(s)</p>
         </div>
+        <div class="panel-header__actions">
+          <button class="primary-button" type="button" data-action="new-ausencia-modal"><span data-icon="plus"></span><span>Nova ausência</span></button>
+        </div>
       </div>
-
-      <details class="fleet-add">
-        <summary><span data-icon="plus"></span> Registar ausência</summary>
-        <form class="data-form" data-form="new-ausencia">
-          <div class="form-grid">
-            <label class="field">
-              <span>Motorista</span>
-              <input name="driver" list="ausencia-drivers" required placeholder="Nome do motorista">
-              <datalist id="ausencia-drivers">${drivers.map((d) => `<option value="${escapeAttr(d)}"></option>`).join("")}</datalist>
-            </label>
-            <label class="field">
-              <span>Tipo</span>
-              <select name="type">${ABSENCE_TYPES.map((t) => `<option value="${escapeAttr(t)}">${escapeHtml(t)}</option>`).join("")}</select>
-            </label>
-            <label class="field"><span>Início</span><input type="date" name="startAt" required></label>
-            <label class="field"><span>Fim</span><input type="date" name="endAt" required></label>
-            <label class="field"><span>Notas</span><input name="notes" placeholder="Opcional"></label>
-          </div>
-          <div class="form-actions">
-            <button class="primary-button" type="submit"><span data-icon="plus"></span><span>Registar ausência</span></button>
-          </div>
-        </form>
-      </details>
 
       ${renderAusenciaCalendar(monthISO, list)}
       ${renderAusenciaPlanning(monthAbs, monthISO)}
@@ -5446,6 +5443,28 @@ function shiftAusenciaMonth(delta) {
   render();
 }
 
+function openAusenciaModal() {
+  const drivers = distinctFleetDrivers();
+  const body = `
+    <form class="modal-form" data-form="new-ausencia">
+      <label class="field field--wide">Motorista *
+        <input name="driver" list="ausencia-drivers" required placeholder="Nome do motorista">
+        <datalist id="ausencia-drivers">${drivers.map((d) => `<option value="${escapeAttr(d)}"></option>`).join("")}</datalist>
+      </label>
+      <div class="field-row">
+        <label class="field">Tipo<select name="type">${ABSENCE_TYPES.map((t) => `<option value="${escapeAttr(t)}">${escapeHtml(t)}</option>`).join("")}</select></label>
+        <label class="field">Início *<input type="date" name="startAt" required></label>
+        <label class="field">Fim *<input type="date" name="endAt" required></label>
+      </div>
+      <label class="field field--wide">Notas<input name="notes" placeholder="Opcional"></label>
+      <div class="modal-form__actions">
+        <button type="button" class="ghost-button" data-action="close-modal">Cancelar</button>
+        <button type="submit" class="primary-button"><span data-icon="plus"></span><span>Registar ausência</span></button>
+      </div>
+    </form>`;
+  openModal("Nova ausência", body);
+}
+
 async function handleNewAusencia(form) {
   const data = new FormData(form);
   const driver = String(data.get("driver") || "").trim();
@@ -5478,6 +5497,7 @@ async function handleNewAusencia(form) {
     note: `${driver} · ${formatDate(startAt)} → ${formatDate(endAt)}`
   };
   state.audit.unshift(auditEvent);
+  closeModal();
   saveState();
   showToast("Ausência registada.");
   render();

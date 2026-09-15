@@ -18,6 +18,7 @@ let remoteBreakdownHasOccurrence = true;
 let remoteBreakdownHasDetails = true;
 let remoteBreakdownHasWorkshopExit = true;
 let remoteBreakdownHasFaults = true;
+let remoteBreakdownHasPreventive = true;
 
 // Tipos de ausência de motorista (calendário de ausências, migração 003).
 const ABSENCE_TYPES = ["Férias", "Baixa médica"];
@@ -824,6 +825,7 @@ function normalizeBreakdownFields(item) {
     expectedEntryAt: item.expectedEntryAt || null,
     workshopExitAt: item.workshopExitAt || null,
     faults: normalizeFaults(item.faults),
+    preventivePlan: normalizePreventive(item.preventivePlan),
     attachments: normalizeAttachments(item.attachments)
   };
 }
@@ -937,6 +939,7 @@ async function loadRemoteState() {
     remoteBreakdownHasDetails = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "communicated_at");
     remoteBreakdownHasWorkshopExit = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "workshop_exit_at");
     remoteBreakdownHasFaults = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "faults");
+    remoteBreakdownHasPreventive = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "preventive_plan");
   }
 
   if (!fleetResult.data.length && !breakdownsResult.data.length) {
@@ -1096,6 +1099,9 @@ function applyRemoteRow(payload, collection, mapper) {
     if (collection === "breakdowns" && !remoteBreakdownHasFaults) {
       const pf = state.breakdowns[index].faults;
       if (pf && pf.length) item.faults = pf;
+    }
+    if (collection === "breakdowns" && !remoteBreakdownHasPreventive) {
+      item.preventivePlan = state.breakdowns[index].preventivePlan || item.preventivePlan;
     }
     state[collection][index] = item;
   } else {
@@ -2031,6 +2037,8 @@ function appBreakdownToDb(item) {
   if (remoteBreakdownHasWorkshopExit) row.workshop_exit_at = item.workshopExitAt || null;
   // Lista de avarias da ocorrência (multi-avaria) — só envia quando a coluna existe (migração 011).
   if (remoteBreakdownHasFaults) row.faults = normalizeFaults(item.faults);
+  // Plano de preventiva periódica — só envia quando a coluna existe (migração 012).
+  if (remoteBreakdownHasPreventive) row.preventive_plan = normalizePreventive(item.preventivePlan);
   // Ligação à vistoria de origem — só envia as colunas quando existe ligação,
   // para não exigir as colunas nas avarias antigas (sem ligação).
   if (item.vistoriaId) {
@@ -2074,6 +2082,7 @@ function dbBreakdownToApp(row) {
     expectedEntryAt: row.expected_entry_at || null,
     workshopExitAt: row.workshop_exit_at || null,
     faults: row.faults,
+    preventivePlan: row.preventive_plan || null,
     vistoriaId: row.vistoria_id || "",
     vistoriaItem: row.vistoria_item || "",
     vistoriaSection: row.vistoria_section || "",
@@ -3760,6 +3769,17 @@ function openOccurrenceModal() {
         <label class="field">Conjunto (trator/reboque)
           <input id="occ-conjunto" name="conjunto" readonly placeholder="(atribuído se a viatura tiver conjunto)">
         </label>
+        <div id="occ-preventive-wrap" hidden>
+          <label class="field field--check"><input type="checkbox" name="preventivePeriodic" id="occ-preventive"> <span>Preventiva periódica?</span></label>
+          <div class="field-row" id="occ-preventive-detail" hidden>
+            <label class="field">Intervenção a reagendar
+              <select name="preventiveField" id="occ-preventive-field"></select>
+            </label>
+            <label class="field">Periodicidade
+              <select name="preventiveMonths" id="occ-preventive-months"><option value="12">12 meses</option><option value="24">24 meses</option></select>
+            </label>
+          </div>
+        </div>
       </div>
 
       <div class="occ-section">
@@ -3868,7 +3888,31 @@ function wireOccurrenceModal() {
   const faultAddBtn = root.querySelector("#occ-fault-add-btn");
   const faultList = root.querySelector("#occ-fault-list");
   const priorityField = root.querySelector('select[name="priority"]');
+  const interventionSel = root.querySelector('[name="interventionType"]');
+  const prevWrap = root.querySelector("#occ-preventive-wrap");
+  const prevChk = root.querySelector("#occ-preventive");
+  const prevDetail = root.querySelector("#occ-preventive-detail");
+  const prevField = root.querySelector("#occ-preventive-field");
+  const prevMonths = root.querySelector("#occ-preventive-months");
   _occFaults = [];
+
+  const populatePreventiveFields = () => {
+    if (!prevField) return;
+    prevField.innerHTML = preventiveFieldsForPlate(plate ? plate.value : "")
+      .map((p) => `<option value="${escapeAttr(p.field)}">${escapeHtml(p.label)}</option>`).join("");
+    if (prevMonths && prevField.value) prevMonths.value = String(preventiveMonthsFor(prevField.value));
+  };
+  const togglePreventiveDetail = () => {
+    if (!prevDetail) return;
+    prevDetail.hidden = !(prevChk && prevChk.checked);
+    if (prevChk && prevChk.checked) populatePreventiveFields();
+  };
+  const togglePreventiveWrap = () => {
+    if (!prevWrap) return;
+    const isPrev = interventionSel && normalizeText(interventionSel.value) === "preventiva";
+    prevWrap.hidden = !isPrev;
+    if (!isPrev && prevChk) { prevChk.checked = false; togglePreventiveDetail(); }
+  };
 
   const populateRecurrent = () => {
     if (!recurrentOf) return;
@@ -3910,6 +3954,7 @@ function wireOccurrenceModal() {
     }
     populateRecurrent();
     populateTypes();
+    if (prevChk && prevChk.checked) populatePreventiveFields();
   };
   const toggleRecurrent = () => {
     if (recurrentWrap) recurrentWrap.hidden = !recurrentChk.checked;
@@ -3935,6 +3980,10 @@ function wireOccurrenceModal() {
     _occFaults = _occFaults.filter((f) => f.id !== btn.getAttribute("data-occ-fault-remove"));
     renderFaultList();
   });
+  if (interventionSel) interventionSel.addEventListener("change", togglePreventiveWrap);
+  if (prevChk) prevChk.addEventListener("change", togglePreventiveDetail);
+  if (prevField) prevField.addEventListener("change", () => { if (prevMonths) prevMonths.value = String(preventiveMonthsFor(prevField.value)); });
+  togglePreventiveWrap();
   if (plate && plate.value) fillFromPlate();
   renderFaultList();
 }
@@ -4750,6 +4799,11 @@ async function handleQuickUpdate(form, intent) {
   breakdown.driver = String(data.get("driver") || "").trim();
   breakdown.description = String(data.get("description") || "").trim();
 
+  let preventiveDone = null;
+  if (finalStatus === "Concluido" && previous.status !== "Concluido") {
+    preventiveDone = applyPreventiveOnClose(breakdown, todayISO());
+  }
+
   if (newAttachments.length) {
     breakdown.attachments = [...normalizeAttachments(breakdown.attachments), ...newAttachments];
   }
@@ -4770,7 +4824,7 @@ async function handleQuickUpdate(form, intent) {
   recordMeetingEvent(intent === "close" ? "close" : intent === "reopen" ? "reopen" : "update", breakdown, trelloNote || (changes.length ? changes.join("; ") : "Atualização"));
 
   saveState();
-  showToast(intent === "close" ? "Avaria concluída." : intent === "reopen" ? "Ocorrência reaberta." : "Atualização guardada.");
+  showToast(preventiveDone ? `Concluída. Próxima agendada: ${formatDate(preventiveDone.nextDate)}.` : intent === "close" ? "Avaria concluída." : intent === "reopen" ? "Ocorrência reaberta." : "Atualização guardada.");
   render();
   refreshDetailModal();
   if (typeof syncBreakdownToTrello === "function" && trelloNote) {
@@ -4779,6 +4833,7 @@ async function handleQuickUpdate(form, intent) {
   await persistRemoteSafely(async () => {
     await persistBreakdownRemote(breakdown);
     await persistAuditRemote(auditEvent);
+    if (preventiveDone) { await persistFleetRemote(preventiveDone.fleetItem); await persistAuditRemote(preventiveDone.auditEvent); }
   });
 }
 
@@ -4846,6 +4901,10 @@ async function handleNewBreakdown(form) {
   const registeredBy = String(data.get("registeredBy") || remoteConfig.operator || "").trim();
   const logisticsResp = String(data.get("logisticsResp") || "").trim();
   const recurrentOf = String(data.get("recurrentOf") || "").trim();
+  const preventivePeriodic = interventionType === "Preventiva" && String(data.get("preventivePeriodic") || "") !== "";
+  const preventivePlan = (preventivePeriodic && data.get("preventiveField"))
+    ? { field: String(data.get("preventiveField")), months: Number(data.get("preventiveMonths")) || 12 }
+    : null;
   const faults = normalizeFaults(_occFaults);
   const typeStr = faults.length ? faults.map((f) => f.tipo).join("; ") : "Outro";
   const fromModal = isModalOpen();
@@ -4876,7 +4935,8 @@ async function handleNewBreakdown(form) {
     recurrentOf,
     type: typeStr,
     faults,
-    status: String(data.get("status") || "Parado"),
+    preventivePlan,
+    status: preventivePlan ? "Agendado" : String(data.get("status") || "Parado"),
     situation: String(data.get("situation") || "").trim(),
     reportedAt,
     workshopEntryAt: emptyToNull(data.get("workshopEntryAt")),
@@ -4965,9 +5025,10 @@ async function closeBreakdown(id) {
   breakdown.status = "Concluido";
   appendHistory(breakdown, "Concluido", "Concluido pela lista", todayISO());
   const auditEvent = logAudit(breakdown, "Concluída", "Concluido pela lista");
+  const prev = applyPreventiveOnClose(breakdown, todayISO());
   recordMeetingEvent("close", breakdown, "Concluída pela lista");
   saveState();
-  showToast("Avaria concluída.");
+  showToast(prev ? `Concluída. Próxima ${escapeHtml(prev.auditEvent.action.replace("Frota: ", ""))}: ${formatDate(prev.nextDate)}.` : "Avaria concluída.");
   render();
   if (typeof syncBreakdownToTrello === "function") {
     syncBreakdownToTrello(breakdown, "Concluído pela lista");
@@ -4975,6 +5036,7 @@ async function closeBreakdown(id) {
   await persistRemoteSafely(async () => {
     await persistBreakdownRemote(breakdown);
     await persistAuditRemote(auditEvent);
+    if (prev) { await persistFleetRemote(prev.fleetItem); await persistAuditRemote(prev.auditEvent); }
   });
 }
 
@@ -5306,6 +5368,49 @@ function faultFromSelect(selectEl) {
   if (!selectEl || !selectEl.value) return null;
   const opt = selectEl.selectedOptions[0];
   return { tipo: selectEl.value, prioridade: (opt && opt.dataset.prio) || "" };
+}
+
+// ── Preventiva periódica: intervenções da Frota a reagendar ────────────────
+const PREVENTIVE_FIELDS = [
+  { field: "inspectionAt", label: "Inspeção", months: 12 },
+  { field: "tachographAt", label: "Aferição tacógrafo", months: 24 },
+  { field: "compressorReviewAt", label: "Revisão compressor", months: 12 },
+  { field: "wheelHubReviewAt", label: "Cubos de roda", months: 12 },
+  { field: "revisionAt", label: "Revisão", months: 12 }
+];
+function preventiveFieldsForPlate(plate) {
+  const trator = vehicleBucketForPlate(plate) === "Trator";
+  return PREVENTIVE_FIELDS.filter((p) => p.field !== "revisionAt" || trator);
+}
+function preventiveMonthsFor(field) {
+  const p = PREVENTIVE_FIELDS.find((x) => x.field === field);
+  return p ? p.months : 12;
+}
+function normalizePreventive(p) {
+  if (typeof p === "string") { try { p = JSON.parse(p); } catch { p = null; } }
+  if (!p || !p.field || !p.months) return null;
+  return { field: String(p.field), months: Number(p.months) || 12 };
+}
+function addMonthsISO(iso, months) {
+  const src = String(iso || "").slice(0, 10);
+  const base = src ? new Date(`${src}T00:00:00`) : new Date();
+  if (isNaN(base.getTime())) return "";
+  base.setMonth(base.getMonth() + Number(months || 0));
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
+}
+// Ao concluir uma preventiva periódica, agenda a próxima data dessa intervenção na Frota.
+function applyPreventiveOnClose(breakdown, conclusionISO) {
+  const plan = normalizePreventive(breakdown && breakdown.preventivePlan);
+  if (!plan) return null;
+  const plateN = normalizePlate(breakdown.plate || "");
+  const fleetItem = state.fleet.find((f) => String(f.equipment) === String(breakdown.equipment) || (plateN && normalizePlate(f.plate) === plateN));
+  if (!fleetItem) return null;
+  const nextDate = addMonthsISO(conclusionISO || todayISO(), plan.months);
+  if (!nextDate) return null;
+  const prev = fleetItem[plan.field] || "";
+  fleetItem[plan.field] = nextDate;
+  const auditEvent = logFleetAudit(fleetItem, plan.field, prev || "-", nextDate);
+  return { fleetItem, auditEvent, nextDate };
 }
 
 function faultTypeOptionsHtml(vehicleType, selectedSet) {

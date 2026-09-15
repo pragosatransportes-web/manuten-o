@@ -1084,6 +1084,26 @@ body.modal-open { overflow: hidden; }
 .deadline-sched--none { background: #f1f5f9; color: #64748b; }
 .deadline-subhead { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 10px 0 4px; }
 .deadline-subhead:first-child { margin-top: 0; }
+/* Multi-avaria */
+.prog-badge { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.prog-badge--grey { background: #f1f5f9; color: #64748b; }
+.prog-badge--red { background: #fee2e2; color: #991b1b; }
+.prog-badge--orange { background: #ffedd5; color: #9a3412; }
+.prog-badge--green { background: #dcfce7; color: #166534; }
+.occ-fault-add { display: flex; gap: 6px; margin-top: 4px; }
+.occ-fault-add select { flex: 1; min-width: 0; }
+.occ-fault-list { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.occ-fault-empty { font-size: 12px; color: var(--muted); margin: 6px 0; }
+.occ-fault-chip { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.occ-fault-chip__t { flex: 1; min-width: 0; font-size: 12.5px; }
+.detail-faults { margin: 12px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); }
+.detail-faults__head h3 { margin: 0 0 8px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.fault-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.fault-item.done .fault-item__t { text-decoration: line-through; color: var(--muted); }
+.fault-item__t { flex: 1; min-width: 0; font-size: 12.5px; }
+.fault-check { border: none; background: transparent; cursor: pointer; font-size: 15px; line-height: 1; padding: 0; }
+.detail-faults__add { display: flex; gap: 6px; margin-top: 8px; }
+.detail-faults__add select { flex: 1; min-width: 0; }
 .fleet-health { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; padding: 8px 10px; margin-top: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
 .fleet-health--green { border-left: 3px solid #16a34a; }
 .fleet-health--amber { border-left: 3px solid #d97706; }

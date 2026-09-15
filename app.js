@@ -17,6 +17,7 @@ let remoteFleetHasLogisticsResp = true;
 let remoteBreakdownHasOccurrence = true;
 let remoteBreakdownHasDetails = true;
 let remoteBreakdownHasWorkshopExit = true;
+let remoteBreakdownHasFaults = true;
 
 // Tipos de ausência de motorista (calendário de ausências, migração 003).
 const ABSENCE_TYPES = ["Férias", "Baixa médica"];
@@ -350,6 +351,9 @@ document.addEventListener("click", async (event) => {
     state.selectedId = button.dataset.id;
     saveState();
     openDetailModal(button.dataset.id);
+  }
+  if (action === "fault-toggle" || action === "fault-remove" || action === "fault-add") {
+    await handleFaultAction(action, button);
   }
   if (action === "open-meeting") {
     openMeeting();
@@ -819,6 +823,7 @@ function normalizeBreakdownFields(item) {
     recurrentOf: item.recurrentOf || "",
     expectedEntryAt: item.expectedEntryAt || null,
     workshopExitAt: item.workshopExitAt || null,
+    faults: normalizeFaults(item.faults),
     attachments: normalizeAttachments(item.attachments)
   };
 }
@@ -931,6 +936,7 @@ async function loadRemoteState() {
     remoteBreakdownHasOccurrence = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "occurrence_number");
     remoteBreakdownHasDetails = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "communicated_at");
     remoteBreakdownHasWorkshopExit = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "workshop_exit_at");
+    remoteBreakdownHasFaults = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "faults");
   }
 
   if (!fleetResult.data.length && !breakdownsResult.data.length) {
@@ -1086,6 +1092,10 @@ function applyRemoteRow(payload, collection, mapper) {
     }
     if (collection === "breakdowns" && !remoteBreakdownHasWorkshopExit) {
       item.workshopExitAt = state.breakdowns[index].workshopExitAt || item.workshopExitAt;
+    }
+    if (collection === "breakdowns" && !remoteBreakdownHasFaults) {
+      const pf = state.breakdowns[index].faults;
+      if (pf && pf.length) item.faults = pf;
     }
     state[collection][index] = item;
   } else {
@@ -2019,6 +2029,8 @@ function appBreakdownToDb(item) {
   }
   // Saída de oficina (Fatia detalhe) — só envia quando a coluna existe (migração 010).
   if (remoteBreakdownHasWorkshopExit) row.workshop_exit_at = item.workshopExitAt || null;
+  // Lista de avarias da ocorrência (multi-avaria) — só envia quando a coluna existe (migração 011).
+  if (remoteBreakdownHasFaults) row.faults = normalizeFaults(item.faults);
   // Ligação à vistoria de origem — só envia as colunas quando existe ligação,
   // para não exigir as colunas nas avarias antigas (sem ligação).
   if (item.vistoriaId) {
@@ -2061,6 +2073,7 @@ function dbBreakdownToApp(row) {
     recurrentOf: row.recurrent_of || "",
     expectedEntryAt: row.expected_entry_at || null,
     workshopExitAt: row.workshop_exit_at || null,
+    faults: row.faults,
     vistoriaId: row.vistoria_id || "",
     vistoriaItem: row.vistoria_item || "",
     vistoriaSection: row.vistoria_section || "",
@@ -3060,6 +3073,34 @@ function refreshDetailModal() {
   if (b) { holder.innerHTML = renderDetail(b); hydrateIcons(); }
 }
 
+async function handleFaultAction(action, button) {
+  const b = state.breakdowns.find((x) => String(x.id) === String(button.dataset.id));
+  if (!b) return;
+  b.faults = normalizeFaults(b.faults);
+  if (action === "fault-toggle") {
+    const f = b.faults.find((x) => x.id === button.dataset.fault);
+    if (f) f.resolvida = !f.resolvida;
+  } else if (action === "fault-remove") {
+    b.faults = b.faults.filter((x) => x.id !== button.dataset.fault);
+  } else if (action === "fault-add") {
+    const sel = document.getElementById("detail-fault-select-" + button.dataset.id);
+    const f = faultFromSelect(sel);
+    if (!f || !f.tipo) { showToast("Escolha um tipo de avaria."); return; }
+    if (b.faults.some((x) => normalizeText(x.tipo) === normalizeText(f.tipo))) { showToast("Essa avaria já existe."); return; }
+    b.faults.push({ id: `f${Date.now()}${b.faults.length}`, tipo: f.tipo, prioridade: f.prioridade, resolvida: false });
+  }
+  deriveBreakdownFromFaults(b);
+  const p = faultProgress(b);
+  const auditEvent = logAudit(b, "Avarias", p ? `Resolução ${p.pct}% (${p.resolved}/${p.total})` : "Avarias atualizadas");
+  saveState();
+  render();
+  refreshDetailModal();
+  await persistRemoteSafely(async () => {
+    await persistBreakdownRemote(b);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
 function renderDetail(breakdown) {
   if (!breakdown) {
     return '<p class="empty-state">Sem registo selecionado.</p>';
@@ -3068,6 +3109,7 @@ function renderDetail(breakdown) {
   const timeline = parseHistory(breakdown.historyNotes);
   const vehBucket = vehicleBucketForPlate(breakdown.plate);
   const typeSet = new Set(String(breakdown.type || "").split(/[;,]/).map((s) => normalizeText(s.trim())).filter(Boolean));
+  const faultsSorted = normalizeFaults(breakdown.faults).slice().sort((a, b) => (FAULT_PRIO_RANK[a.prioridade] || 9) - (FAULT_PRIO_RANK[b.prioridade] || 9));
   const oficinasList = entidadesByCategoria("Oficina");
   let oficinaOpts = oficinasList.map((o) => `<option value="${escapeAttr(o.empresa)}"${normalizeText(o.empresa) === normalizeText(breakdown.workshop || "") ? " selected" : ""}>${escapeHtml(o.empresa)}</option>`).join("");
   if (breakdown.workshop && !oficinasList.some((o) => normalizeText(o.empresa) === normalizeText(breakdown.workshop))) {
@@ -3083,6 +3125,7 @@ function renderDetail(breakdown) {
         <span>${escapeHtml(breakdown.plate || "-")}</span>
         ${priorityBadge(breakdown.priority)}
         ${statusBadge(breakdown.status)}
+        ${progressBadge(breakdown)}
       </div>
     </div>
 
@@ -3100,6 +3143,24 @@ function renderDetail(breakdown) {
       ${breakdown.recurrentOf ? `<div><dt>Reincidente de</dt><dd>${escapeHtml(breakdown.recurrentOf)}</dd></div>` : ""}
       <div><dt>Última nota</dt><dd>${escapeHtml(breakdown.lastNote || "-")}</dd></div>
     </dl>
+
+    <div class="detail-faults">
+      <div class="detail-faults__head"><h3>Avarias ${progressBadge(breakdown)}</h3></div>
+      ${faultsSorted.length ? faultsSorted.map((f) => `
+        <div class="fault-item${f.resolvida ? " done" : ""}">
+          <button class="fault-check" type="button" data-action="fault-toggle" data-id="${escapeAttr(breakdown.id)}" data-fault="${escapeAttr(f.id)}" title="${f.resolvida ? "Marcar por resolver" : "Marcar resolvida"}">${f.resolvida ? "✅" : "⬜"}</button>
+          ${priorityBadge(f.prioridade)}
+          <span class="fault-item__t">${escapeHtml(f.tipo)}</span>
+          <button class="g-x" type="button" data-action="fault-remove" data-id="${escapeAttr(breakdown.id)}" data-fault="${escapeAttr(f.id)}" title="Remover avaria">×</button>
+        </div>`).join("") : '<p class="empty-state">Sem avarias registadas. Adicione abaixo.</p>'}
+      <div class="detail-faults__add">
+        <select id="detail-fault-select-${escapeAttr(breakdown.id)}">
+          <option value="" disabled selected>Escolher tipo de avaria…</option>
+          ${faultTypeOptionsHtml(vehBucket)}
+        </select>
+        <button class="btn-sec" type="button" data-action="fault-add" data-id="${escapeAttr(breakdown.id)}">＋ Avaria</button>
+      </div>
+    </div>
 
     ${breakdown.vistoriaId ? `
       <div class="link-banner">
@@ -3172,10 +3233,6 @@ function renderDetail(breakdown) {
             ${oficinaOpts}
           </select>
         </label>
-        <label class="field full-span">
-          <span>Tipo de avaria (multi-seleção)</span>
-          <select name="type" multiple size="6">${faultTypeOptionsHtml(vehBucket, typeSet)}</select>
-        </label>
         <label class="field">
           <span>Motorista</span>
           <input name="driver" value="${escapeAttr(breakdown.driver || "")}" placeholder="Motorista">
@@ -3239,6 +3296,7 @@ function breakdownListRow(item) {
       <strong>${escapeHtml(item.occurrenceNumber || "—")}</strong>
       <span>${escapeHtml(item.interventionType || "Corretiva")}</span>
       ${priorityBadge(item.priority)}
+      ${progressBadge(item)}
     </td>
     <td><strong>${escapeHtml(item.equipment || "-")}</strong></td>
     <td>${escapeHtml(item.plate || "-")}</td>
@@ -3646,6 +3704,7 @@ function occurrencesForPlate(plate) {
     }));
 }
 
+let _occFaults = []; // avarias em construção na Nova ocorrência (multi-avaria)
 function openOccurrenceModal() {
   const today = todayISO();
   const link = state.avariaFromVistoria || null;
@@ -3743,9 +3802,12 @@ function openOccurrenceModal() {
 
       <div class="occ-section">
         <p class="occ-section__title">4 · Classificação e detalhes</p>
-        <label class="field field--wide">Tipo de avaria <span class="occ-hint">(escolha um ou vários — filtrado pela viatura)</span>
-          <select name="type" id="occ-type" multiple size="7"><option value="" disabled>Selecione a matrícula primeiro</option></select>
-        </label>
+        <label class="field field--wide">Avarias <span class="occ-hint">(escolhe o tipo e adiciona; podes juntar várias)</span></label>
+        <div class="occ-fault-add">
+          <select id="occ-fault-select"><option value="" disabled selected>Selecione a matrícula primeiro</option></select>
+          <button type="button" class="btn-sec" id="occ-fault-add-btn">＋ Adicionar avaria</button>
+        </div>
+        <div id="occ-fault-list" class="occ-fault-list"></div>
         <div class="field-row">
           <label class="field">Km
             <input type="number" name="km" min="0" placeholder="Quilómetros">
@@ -3777,6 +3839,17 @@ function openOccurrenceModal() {
   wireOccurrenceModal();
 }
 
+function renderOccFaultsList(faults) {
+  if (!faults || !faults.length) return `<p class="occ-fault-empty">Sem avarias adicionadas ainda.</p>`;
+  const sorted = faults.slice().sort((a, b) => (FAULT_PRIO_RANK[a.prioridade] || 9) - (FAULT_PRIO_RANK[b.prioridade] || 9));
+  return sorted.map((f) => `
+    <div class="occ-fault-chip">
+      ${priorityBadge(f.prioridade)}
+      <span class="occ-fault-chip__t">${escapeHtml(f.tipo)}</span>
+      <button type="button" class="g-x" data-occ-fault-remove="${escapeAttr(f.id)}" title="Remover">×</button>
+    </div>`).join("");
+}
+
 function wireOccurrenceModal() {
   const root = document.querySelector("#modal-root");
   if (!root) return;
@@ -3791,8 +3864,11 @@ function wireOccurrenceModal() {
   const workshopFields = root.querySelector("#occ-workshop-fields");
   const workshopType = root.querySelector("#occ-workshoptype");
   const workshopSel = root.querySelector("#occ-workshop");
-  const typeSel = root.querySelector("#occ-type");
+  const faultSelect = root.querySelector("#occ-fault-select");
+  const faultAddBtn = root.querySelector("#occ-fault-add-btn");
+  const faultList = root.querySelector("#occ-fault-list");
   const priorityField = root.querySelector('select[name="priority"]');
+  _occFaults = [];
 
   const populateRecurrent = () => {
     if (!recurrentOf) return;
@@ -3800,20 +3876,26 @@ function wireOccurrenceModal() {
     recurrentOf.innerHTML = `<option value="">—</option>` + list.map((o) => `<option value="${escapeAttr(o.number)}">${escapeHtml(o.label)}</option>`).join("");
   };
   const populateTypes = () => {
-    if (!typeSel) return;
-    typeSel.innerHTML = plate.value
-      ? faultTypeOptionsHtml(vehicleBucketForPlate(plate.value))
-      : `<option value="" disabled>Selecione a matrícula primeiro</option>`;
+    if (!faultSelect) return;
+    faultSelect.innerHTML = plate.value
+      ? `<option value="" disabled selected>Escolher tipo de avaria…</option>` + faultTypeOptionsHtml(vehicleBucketForPlate(plate.value))
+      : `<option value="" disabled selected>Selecione a matrícula primeiro</option>`;
   };
-  const prefillPriorityFromTypes = () => {
-    if (!typeSel || !priorityField || priorityField.value) return; // não sobrepõe escolha manual
-    const rank = { P1: 1, P2: 2, P3: 3, P4: 4 };
-    let best = "";
-    for (const opt of typeSel.selectedOptions) {
-      const p = opt.dataset.prio;
-      if (p && (!best || rank[p] < rank[best])) best = p;
+  const renderFaultList = () => {
+    if (faultList) faultList.innerHTML = renderOccFaultsList(_occFaults);
+    if (priorityField) {
+      let best = "";
+      _occFaults.forEach((f) => { if (f.prioridade && (!best || FAULT_PRIO_RANK[f.prioridade] < FAULT_PRIO_RANK[best])) best = f.prioridade; });
+      if (best) priorityField.value = best;
     }
-    if (best) priorityField.value = best;
+  };
+  const addFault = () => {
+    const f = faultFromSelect(faultSelect);
+    if (!f || !f.tipo) { showToast("Escolha um tipo de avaria."); return; }
+    if (_occFaults.some((x) => normalizeText(x.tipo) === normalizeText(f.tipo))) { showToast("Essa avaria já foi adicionada."); return; }
+    _occFaults.push({ id: `f${Date.now()}${_occFaults.length}`, tipo: f.tipo, prioridade: f.prioridade, resolvida: false });
+    renderFaultList();
+    if (faultSelect) faultSelect.value = "";
   };
   const fillFromPlate = () => {
     const f = findFleetByPlate(plate.value);
@@ -3846,8 +3928,15 @@ function wireOccurrenceModal() {
   if (recurrentChk) recurrentChk.addEventListener("change", toggleRecurrent);
   if (onsite) onsite.addEventListener("change", toggleOnSite);
   if (workshopType) workshopType.addEventListener("change", filterOficinas);
-  if (typeSel) typeSel.addEventListener("change", prefillPriorityFromTypes);
+  if (faultAddBtn) faultAddBtn.addEventListener("click", addFault);
+  if (faultList) faultList.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-occ-fault-remove]");
+    if (!btn) return;
+    _occFaults = _occFaults.filter((f) => f.id !== btn.getAttribute("data-occ-fault-remove"));
+    renderFaultList();
+  });
   if (plate && plate.value) fillFromPlate();
+  renderFaultList();
 }
 
 function fleetDescriptions() {
@@ -4655,7 +4744,7 @@ async function handleQuickUpdate(form, intent) {
   breakdown.workshopEntryAt = emptyToNull(data.get("workshopEntryAt"));
   breakdown.workshopExitAt = emptyToNull(data.get("workshopExitAt"));
   breakdown.workshop = String(data.get("workshop") || "").trim();
-  breakdown.type = data.getAll("type").map((s) => String(s).trim()).filter(Boolean).join("; ");
+  // "type" é derivado das avarias (multi-avaria) — não se escreve aqui.
   if (data.has("interventionType")) breakdown.interventionType = String(data.get("interventionType") || breakdown.interventionType || "Corretiva");
   if (data.has("priority")) breakdown.priority = String(data.get("priority") || "");
   breakdown.driver = String(data.get("driver") || "").trim();
@@ -4757,8 +4846,8 @@ async function handleNewBreakdown(form) {
   const registeredBy = String(data.get("registeredBy") || remoteConfig.operator || "").trim();
   const logisticsResp = String(data.get("logisticsResp") || "").trim();
   const recurrentOf = String(data.get("recurrentOf") || "").trim();
-  const typeSelected = data.getAll("type").map((v) => String(v).trim()).filter(Boolean);
-  const typeStr = typeSelected.length ? typeSelected.join("; ") : "Outro";
+  const faults = normalizeFaults(_occFaults);
+  const typeStr = faults.length ? faults.map((f) => f.tipo).join("; ") : "Outro";
   const fromModal = isModalOpen();
   const id = generateId();
   const wasRemoteReady = remoteStatus.ready;
@@ -4786,6 +4875,7 @@ async function handleNewBreakdown(form) {
     logisticsResp,
     recurrentOf,
     type: typeStr,
+    faults,
     status: String(data.get("status") || "Parado"),
     situation: String(data.get("situation") || "").trim(),
     reportedAt,
@@ -4816,6 +4906,7 @@ async function handleNewBreakdown(form) {
   }
   state.avariaFromVistoria = null;
 
+  deriveBreakdownFromFaults(breakdown); // tipo + prioridade a partir das avarias
   state.breakdowns.unshift(breakdown);
   state.selectedId = breakdown.id;
   state.currentView = fromModal ? "breakdowns" : "meeting";
@@ -5164,6 +5255,57 @@ function faultTypeGroups(vehicleType) {
 function vehicleBucketForPlate(plate) {
   const f = findFleetByPlate(plate);
   return f && isTratorFleet(f) ? "Trator" : "Reboque";
+}
+
+// ── Multi-avaria: lista de avarias por ocorrência + % de resolução ──────────
+const FAULT_PRIO_RANK = { P1: 1, P2: 2, P3: 3, P4: 4 };
+
+function normalizeFaults(raw) {
+  let arr = raw;
+  if (typeof arr === "string") { try { arr = JSON.parse(arr || "[]"); } catch { arr = []; } }
+  if (!Array.isArray(arr)) return [];
+  return arr.filter((f) => f && (f.tipo || f.nome)).map((f, i) => ({
+    id: String(f.id || `f${i}-${Math.random().toString(36).slice(2, 6)}`),
+    tipo: String(f.tipo || f.nome || "").trim(),
+    prioridade: /^P[1-4]$/.test(f.prioridade || "") ? f.prioridade : "",
+    resolvida: !!f.resolvida
+  }));
+}
+
+function faultProgress(breakdown) {
+  const faults = normalizeFaults(breakdown && breakdown.faults);
+  if (!faults.length) return null;
+  const total = faults.length;
+  const resolved = faults.filter((f) => f.resolvida).length;
+  const pct = Math.round((resolved / total) * 100);
+  const tone = pct === 0 ? "grey" : pct < 50 ? "red" : pct < 100 ? "orange" : "green";
+  return { total, resolved, pct, tone };
+}
+
+// Deriva o "Tipo" (lista de avarias) e a prioridade (a mais alta por resolver) das avarias.
+function deriveBreakdownFromFaults(breakdown) {
+  const faults = normalizeFaults(breakdown.faults);
+  breakdown.faults = faults;
+  if (!faults.length) return;
+  breakdown.type = faults.map((f) => f.tipo).filter(Boolean).join("; ");
+  const unresolved = faults.filter((f) => !f.resolvida && f.prioridade);
+  const pool = unresolved.length ? unresolved : faults.filter((f) => f.prioridade);
+  let best = "";
+  pool.forEach((f) => { if (!best || FAULT_PRIO_RANK[f.prioridade] < FAULT_PRIO_RANK[best]) best = f.prioridade; });
+  if (best) breakdown.priority = best;
+}
+
+function progressBadge(breakdown) {
+  const p = faultProgress(breakdown);
+  if (!p) return "";
+  return `<span class="prog-badge prog-badge--${p.tone}" title="${p.resolved} de ${p.total} avarias resolvidas">${p.pct}% resolvida</span>`;
+}
+
+// Sela um <select> de tipos de avaria e devolve o par {tipo, prioridade} escolhido.
+function faultFromSelect(selectEl) {
+  if (!selectEl || !selectEl.value) return null;
+  const opt = selectEl.selectedOptions[0];
+  return { tipo: selectEl.value, prioridade: (opt && opt.dataset.prio) || "" };
 }
 
 function faultTypeOptionsHtml(vehicleType, selectedSet) {

@@ -670,7 +670,7 @@ document.addEventListener("submit", async (event) => {
   if (form.dataset.form === "dock-note") {
     event.preventDefault();
     const data = new FormData(form);
-    addMeetingNote(String(data.get("type") || "note"), String(data.get("text") || ""));
+    addMeetingNote(String(data.get("type") || "note"), String(data.get("text") || ""), String(data.get("breakdownId") || ""));
   }
   if (form.dataset.form === "dock-edit") {
     event.preventDefault();
@@ -2249,6 +2249,16 @@ function recordMeetingEvent(type, breakdown, summary) {
   persistRemoteSafely(() => persistMeetingRemote(meeting));
 }
 
+// Ocorrências ativas (em curso/agendadas) para associar notas de reunião a uma viatura.
+function dockOccurrenceOptions(selectedId) {
+  return state.breakdowns
+    .filter((b) => b.status !== "Concluido")
+    .slice()
+    .sort((a, b) => (a.plate || "").localeCompare(b.plate || "", "pt", { numeric: true }))
+    .map((b) => `<option value="${escapeAttr(b.id)}"${String(selectedId) === String(b.id) ? " selected" : ""}>${escapeHtml(`${b.plate || "-"} · ${b.occurrenceNumber || b.interventionType || "ocorrência"}`)}</option>`)
+    .join("");
+}
+
 // Painel flutuante ("volante") de notas/tarefas durante a reunião a decorrer.
 function updateMeetingDock() {
   const dock = document.querySelector("#meeting-dock");
@@ -2296,12 +2306,21 @@ function updateMeetingDock() {
         }).join("") : `<p class="dock-empty">Sem notas nem tarefas ainda. Escreve abaixo. ✍️</p>`}
       </div>
       <form class="dock-form" data-form="dock-note">
-        <select name="type" class="dock-type" aria-label="Tipo">
-          <option value="note" ${type === "note" ? "selected" : ""}>Nota</option>
-          <option value="task" ${type === "task" ? "selected" : ""}>Tarefa</option>
-        </select>
-        <input id="dock-input" name="text" placeholder="Escrever…" autocomplete="off" required>
-        <button class="dock-send" type="submit">Adicionar</button>
+        <div class="dock-form__row">
+          <select name="type" class="dock-type" aria-label="Tipo">
+            <option value="note" ${type === "note" ? "selected" : ""}>Nota</option>
+            <option value="task" ${type === "task" ? "selected" : ""}>Tarefa</option>
+          </select>
+          <select name="breakdownId" class="dock-veh" aria-label="Associar a viatura (opcional)">
+            <option value="">— geral (sem viatura) —</option>
+            ${dockOccurrenceOptions(state.dockNoteBreakdownId)}
+          </select>
+        </div>
+        <div class="dock-form__row">
+          <input id="dock-input" name="text" placeholder="Escrever…" autocomplete="off" required>
+          <button class="dock-send" type="submit">Adicionar</button>
+        </div>
+        <p class="dock-form__hint">Com viatura selecionada, a nota entra no histórico dessa ocorrência.</p>
       </form>
     </div>`;
   const editInput = dock.querySelector(".dock-edit-input");
@@ -2314,25 +2333,68 @@ function updateMeetingDock() {
   }
 }
 
-function addMeetingNote(type, text) {
+function addMeetingNote(type, text, breakdownId) {
   const m = getActiveMeeting();
   const clean = String(text || "").trim();
   if (!m || !clean) return;
   state.dockNoteType = type === "task" ? "task" : "note";
+  state.dockNoteBreakdownId = breakdownId || ""; // mantém a viatura selecionada para a próxima nota
+  const bd = breakdownId ? state.breakdowns.find((b) => String(b.id) === String(breakdownId)) : null;
   m.events.push({
     id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     at: new Date().toISOString(),
     type: state.dockNoteType,
     summary: clean,
     done: false,
-    breakdownId: "", equipment: "", plate: "", status: ""
+    breakdownId: bd ? bd.id : "",
+    equipment: bd ? bd.equipment : "",
+    plate: bd ? bd.plate : "",
+    status: bd ? bd.status : ""
   });
+  // Nota associada a uma viatura → entra também no histórico da ocorrência (per-viatura, sem duplicar).
+  let auditEvent = null;
+  if (bd) {
+    appendHistory(bd, bd.status, `[Reunião] ${clean}`, todayISO());
+    auditEvent = logAudit(bd, "Reunião", clean);
+  }
   saveState();
   updateMeetingDock();
+  if (bd) { render(); refreshDetailModal(); }
   document.querySelector("#dock-input")?.focus();
-  showToast(state.dockNoteType === "task" ? "Tarefa adicionada." : "Nota adicionada.");
-  persistRemoteSafely(() => persistMeetingRemote(m));
+  showToast(bd ? `Nota no histórico de ${bd.plate || bd.equipment}.` : (state.dockNoteType === "task" ? "Tarefa adicionada." : "Nota adicionada."));
+  persistRemoteSafely(async () => {
+    await persistMeetingRemote(m);
+    if (bd) { await persistBreakdownRemote(bd); await persistAuditRemote(auditEvent); }
+  });
 }
+
+// Dock arrastável pela barra de título (janela de reunião movível — FASE2 update).
+(function enableDockDrag() {
+  let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0, dockEl = null;
+  document.addEventListener("mousedown", (e) => {
+    const head = e.target.closest(".dock-head");
+    if (!head || e.target.closest("button")) return;
+    dockEl = document.querySelector("#meeting-dock");
+    if (!dockEl) return;
+    const rect = dockEl.getBoundingClientRect();
+    dockEl.style.left = rect.left + "px";
+    dockEl.style.top = rect.top + "px";
+    dockEl.style.right = "auto";
+    dockEl.style.bottom = "auto";
+    dragging = true; sx = e.clientX; sy = e.clientY; ox = rect.left; oy = rect.top;
+    document.body.classList.add("dock-dragging");
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging || !dockEl) return;
+    let nx = ox + (e.clientX - sx), ny = oy + (e.clientY - sy);
+    nx = Math.max(4, Math.min(window.innerWidth - 60, nx));
+    ny = Math.max(4, Math.min(window.innerHeight - 40, ny));
+    dockEl.style.left = nx + "px";
+    dockEl.style.top = ny + "px";
+  });
+  document.addEventListener("mouseup", () => { dragging = false; document.body.classList.remove("dock-dragging"); });
+})();
 
 function toggleMeetingTask(id) {
   const m = getActiveMeeting();

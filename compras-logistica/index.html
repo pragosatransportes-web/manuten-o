@@ -522,13 +522,24 @@ function msgBtn(linhaId){
   return `<button class="msg-btn" title="Mensagens desta linha" onclick="event.stopPropagation();openConversa('${linhaId}')">💬${t?` <span style="font-size:10px;color:var(--text-3)">${t}</span>`:""}${u?`<span class="msg-count">${u}</span>`:""}</button>`;
 }
 async function openConversa(linhaId){currentConvLine=linhaId;await markReadConv(linhaId);renderConversaModal(linhaId);updateBadges();if(activeTab==="mensagens")renderMensagens()}
+/* Resumo que identifica inequivocamente a rota (carga→descarga, origem, preço) */
+function linhaResumo(l){
+  if(!l)return"";
+  const p=[];
+  if(l.carga||l.descarga)p.push(esc((l.carga||"?")+" → "+(l.descarga||"?")));
+  if(l.origem)p.push("Origem "+esc(l.origem));
+  if(l.preco!==""&&l.preco!=null&&!isNaN(l.preco))p.push(fmtEur(l.preco)+(l.unidade?" "+esc(l.unidade):""));
+  return p.join(" · ");
+}
 function renderConversaModal(linhaId){
   const l=getL(linhaId), ms=msgsDe(linhaId);
   const conv=ms.map(m=>`<div class="bubble ${m.de===perfil?'mine':'theirs'}"><div class="meta">${esc(m.de)} → ${esc(m.para)} · ${dtLabel(m.ts)}</div>${esc(m.texto)}</div>`).join("")
     ||'<div class="muted" style="text-align:center;padding:16px">Sem mensagens nesta linha. Escreve a primeira.</div>';
   const outros=PERFIS.filter(r=>r!==perfil);
+  const em=l?(ESTADOS[l.estado]||ESTADOS.rascunho):null;
   modal(`<h3>💬 Conversa — ${esc(l?(l.servico||l.id):linhaId)}</h3>
-    <div class="info-line muted" style="margin-bottom:2px">${l?esc(l.nomeTransp||l.idTransp)+" · "+esc(l.categoria):"linha "+esc(linhaId)}</div>
+    <div class="info-line" style="margin-bottom:2px">${l?`<b>${esc(l.nomeTransp||l.idTransp)}</b> · ${esc(l.categoria)}${em?` <span class="badge ${em.cls}">${em.label}</span>`:""}`:"linha "+esc(linhaId)}</div>
+    ${l&&linhaResumo(l)?`<div class="info-line muted" style="margin-bottom:8px">${linhaResumo(l)}</div>`:""}
     <div class="conv" id="convBox">${conv}</div>
     <label style="display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);font-weight:600;margin-bottom:2px">Nova mensagem · de ${esc(perfil)}</label>
     <div class="recipient-row">
@@ -1001,14 +1012,14 @@ function renderMensagens(){
     const ms=byLine[lid].slice().sort((a,b)=>(b.ts||"").localeCompare(a.ts||""));
     return {lid,last:ms[0],n:ms.length,u:unreadDe(lid),l:getL(lid)};
   }).sort((a,b)=>(b.last.ts||"").localeCompare(a.last.ts||""));
-  const html=items.map(it=>`<div class="conv-item ${it.u?"unread":""}" onclick="openConversa('${it.lid}')">
+  const html=items.map(it=>{const em=it.l?(ESTADOS[it.l.estado]||ESTADOS.rascunho):null;return `<div class="conv-item ${it.u?"unread":""}" onclick="openConversa('${it.lid}')">
     <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
-      <div><b>${esc(it.l?(it.l.servico||it.l.id):it.lid)}</b> ${it.l?`<span class="chip">${esc(it.l.categoria)}</span>`:`<span class="chip">linha removida</span>`}</div>
+      <div><b>${esc(it.l?(it.l.servico||it.l.id):it.lid)}</b> ${it.l?`<span class="chip">${esc(it.l.categoria)}</span>${em?` <span class="badge ${em.cls}">${em.label}</span>`:""}`:`<span class="chip">linha removida</span>`}</div>
       <div class="muted" style="white-space:nowrap">${dtLabel(it.last.ts)} ${it.u?`<span class="msg-count" style="position:static;display:inline-block;vertical-align:middle">${it.u}</span>`:""}</div>
     </div>
-    ${it.l?`<div class="info-line muted" style="margin-top:3px">${esc(it.l.nomeTransp||it.l.idTransp)}</div>`:""}
+    ${it.l?`<div class="info-line" style="margin-top:3px"><b>${esc(it.l.nomeTransp||it.l.idTransp)}</b>${linhaResumo(it.l)?` <span class="muted">· ${linhaResumo(it.l)}</span>`:""}</div>`:""}
     <div class="info-line" style="margin-top:4px"><b>${esc(it.last.de)} → ${esc(it.last.para)}:</b> ${esc(it.last.texto.slice(0,140))}${it.last.texto.length>140?"…":""} <span class="muted">· ${it.n} msg</span></div>
-  </div>`).join("")||`<div class="empty">Ainda sem mensagens.<br>Abre uma linha em qualquer TAB e clica no 💬 para iniciar uma conversa referente a essa rota.</div>`;
+  </div>`}).join("")||`<div class="empty">Ainda sem mensagens.<br>Abre uma linha em qualquer TAB e clica no 💬 para iniciar uma conversa referente a essa rota.</div>`;
   $("#sec-mensagens").innerHTML=`
     <div class="sh"><div><h2>Mensagens</h2><div class="sub">${items.length} conversa(s) · ${unreadTotal()} por ler · cada conversa está ligada a uma rota/tarefa</div></div></div>
     ${html}`;

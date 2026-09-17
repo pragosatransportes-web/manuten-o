@@ -1033,8 +1033,15 @@ async function loadRemoteState() {
     filters: previousFilters
   };
   applyDriverImport();
+  const recMot = reconciliarMotoristas();
   saveState();
   render();
+  if (recMot.fleet.length || recMot.ausencias.length) {
+    persistRemoteSafely(async () => {
+      for (const f of recMot.fleet) await persistFleetRemote(f);
+      for (const a of recMot.ausencias) await persistAusenciaRemote(a);
+    });
+  }
 }
 
 async function seedRemoteDatabase() {
@@ -4322,16 +4329,26 @@ function renderFleetCompanyCell(item) {
 }
 
 function renderFleetDriverCell(item) {
+  const current = (item.driver || "").trim();
+  const motoristas = entidadesByCategoria("Motorista");
+  const parts = [`<option value="">—</option>`];
+  let matched = false;
+  for (const m of motoristas) {
+    const sel = normalizeText(m.empresa) === normalizeText(current);
+    if (sel) matched = true;
+    parts.push(`<option value="${escapeAttr(m.empresa)}"${sel ? " selected" : ""}>${escapeHtml(m.empresa)}</option>`);
+  }
+  // Valor atual sem correspondência a nenhuma entidade Motorista: preserva-o até ser reclassificado.
+  if (current && !matched) {
+    parts.push(`<option value="${escapeAttr(current)}" selected>${escapeHtml(current)} (atual)</option>`);
+  }
   return `
-    <input
+    <select
       class="fleet-driver-input"
-      type="text"
-      value="${escapeAttr(item.driver || "")}"
-      placeholder="—"
       data-equipment="${escapeAttr(item.equipment)}"
       data-fleet-driver="true"
       aria-label="Motorista equip. ${escapeAttr(item.equipment)}"
-    >
+    >${parts.join("")}</select>
   `;
 }
 
@@ -4414,6 +4431,7 @@ async function updateFleetDriver(equipment, value) {
   const auditEvent = logFleetAudit(item, "driver", previous, next);
   saveState();
   showToast("Motorista guardado.");
+  render();
   await persistRemoteSafely(async () => {
     await persistFleetRemote(item);
     await persistAuditRemote(auditEvent);
@@ -5232,6 +5250,26 @@ function entidadesByCategoria(categoria) {
     .sort((a, b) => a.empresa.localeCompare(b.empresa, "pt"));
 }
 
+// Cruzamento automático: padroniza o campo "Motorista" (frota + ausências) para
+// o nome canónico da entidade com categoria "Motorista" que corresponde (por
+// texto normalizado). Idempotente e não-destrutivo: só altera quando há
+// correspondência de confiança; valores sem correspondência ficam intactos.
+function reconciliarMotoristas() {
+  const motoristas = entidadesByCategoria("Motorista");
+  const fleetChanged = [], ausChanged = [];
+  if (!motoristas.length) return { fleet: fleetChanged, ausencias: ausChanged };
+  const canon = new Map(motoristas.map((m) => [normalizeText(m.empresa), m.empresa]));
+  (state.fleet || []).forEach((f) => {
+    const c = canon.get(normalizeText(f.driver || ""));
+    if (c && f.driver !== c) { f.driver = c; fleetChanged.push(f); }
+  });
+  (state.ausencias || []).forEach((a) => {
+    const c = canon.get(normalizeText(a.driver || ""));
+    if (c && a.driver !== c) { a.driver = c; ausChanged.push(a); }
+  });
+  return { fleet: fleetChanged, ausencias: ausChanged };
+}
+
 function renderEntidades() {
   const list = getFilteredEntidades().sort((a, b) => a.empresa.localeCompare(b.empresa, "pt"));
   const total = state.entidades.length;
@@ -5701,7 +5739,20 @@ function fleetDueList(f) {
 
 // ── Campos editáveis de uma ausência (tabela + janelas dinâmicas) ──
 function ausenciaDriverInput(a) {
-  return `<input class="aus-inp" list="aus-drivers" data-ausencia-id="${escapeAttr(a.id)}" data-ausencia-field="driver" value="${escapeAttr(a.driver || "")}" placeholder="Motorista">`;
+  // Ligação direta: só motoristas afetos a equipamento na Frota (padronizados).
+  const current = (a.driver || "").trim();
+  const drivers = distinctFleetDrivers();
+  const parts = [`<option value="">—</option>`];
+  let matched = false;
+  for (const d of drivers) {
+    const sel = normalizeText(d) === normalizeText(current);
+    if (sel) matched = true;
+    parts.push(`<option value="${escapeAttr(d)}"${sel ? " selected" : ""}>${escapeHtml(d)}</option>`);
+  }
+  if (current && !matched) {
+    parts.push(`<option value="${escapeAttr(current)}" selected>${escapeHtml(current)} (fora da frota)</option>`);
+  }
+  return `<select class="aus-inp" data-ausencia-id="${escapeAttr(a.id)}" data-ausencia-field="driver">${parts.join("")}</select>`;
 }
 function ausenciaTypeSelect(a) {
   return `<select class="aus-inp" data-ausencia-id="${escapeAttr(a.id)}" data-ausencia-field="type">${ABSENCE_TYPES.map((t) => `<option value="${escapeAttr(t)}"${normalizeText(t) === normalizeText(a.type) ? " selected" : ""}>${escapeHtml(t)}</option>`).join("")}</select>`;

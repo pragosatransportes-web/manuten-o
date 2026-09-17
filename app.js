@@ -2318,7 +2318,7 @@ function updateMeetingDock() {
             ${e.type === "task"
               ? `<button class="dock-check" type="button" data-action="dock-task-toggle" data-id="${escapeAttr(e.id)}" title="Marcar concluída">${e.done ? "✅" : "⬜"}</button>`
               : `<span class="dock-ic">🗒️</span>`}
-            <span class="dock-text">${escapeHtml(e.summary || "")}</span>
+            <span class="dock-text">${(e.plate || e.equipment) ? `<span class="dock-veh-tag">🚚 ${escapeHtml(e.plate || `Equip. ${e.equipment}`)}</span> ` : ""}${escapeHtml(e.summary || "")}</span>
             <span class="dock-meta">
               <time>${escapeHtml(formatTimeOnly(e.at))}</time>
               <button class="dock-mini" type="button" data-action="dock-item-edit" data-id="${escapeAttr(e.id)}" title="Editar">✏️</button>
@@ -2936,9 +2936,12 @@ function renderMeetingReport() {
       <p>${escapeHtml(e.summary || "-")}</p>
       ${evActions(e)}
     </article>`).join("") : '<p class="empty-state">Sem registos.</p>';
+  const evVehicle = (e) => (e.plate || e.equipment)
+    ? ` · <span class="timeline-veh">🚚 ${escapeHtml(e.plate || "")}${e.equipment ? ` · Equip. ${escapeHtml(String(e.equipment))}` : ""}</span>`
+    : "";
   const noteRows = (arr) => arr.length ? arr.map((e) => `
     <article class="timeline-item">
-      <time>${formatTimeOnly(e.at)}${e.type === "task" ? (e.done ? " · ✅ concluída" : " · ⬜ pendente") : ""}</time>
+      <time>${formatTimeOnly(e.at)}${e.type === "task" ? (e.done ? " · ✅ concluída" : " · ⬜ pendente") : ""}${evVehicle(e)}</time>
       <p>${escapeHtml(e.summary || "-")}</p>
       ${evActions(e)}
     </article>`).join("") : '<p class="empty-state">Sem registos.</p>';
@@ -6380,13 +6383,13 @@ function buildMeetingReportWorkbook(meeting) {
       },
       {
         title: "Tarefas",
-        columns: ["Hora", "Estado", "Tarefa"],
-        rows: tarefas.map((e) => [formatTimeOnly(e.at), e.done ? "Concluída" : "Pendente", e.summary || ""])
+        columns: ["Hora", "Estado", "Matrícula", "Equip.", "Tarefa"],
+        rows: tarefas.map((e) => [formatTimeOnly(e.at), e.done ? "Concluída" : "Pendente", e.plate || "", String(e.equipment || ""), e.summary || ""])
       },
       {
         title: "Notas",
-        columns: ["Hora", "Nota / observação"],
-        rows: notas.map((e) => [formatTimeOnly(e.at), e.summary || ""])
+        columns: ["Hora", "Matrícula", "Equip.", "Nota / observação"],
+        rows: notas.map((e) => [formatTimeOnly(e.at), e.plate || "", String(e.equipment || ""), e.summary || ""])
       }
     ]
   };
@@ -6418,12 +6421,13 @@ function meetingReportText(meeting) {
   if (updates.length) updates.forEach((e) => lines.push(`- Equip. ${e.equipment || "-"} · ${e.plate || "-"} · ${meetingEventLabel(e.type)}: ${e.summary || "-"}`));
   else lines.push("- (nenhuma)");
   lines.push("");
+  const vehPrefix = (e) => (e.plate || e.equipment) ? `[${e.plate || `Equip. ${e.equipment}`}] ` : "";
   lines.push(heading(`Tarefas (${tarefas.length})`));
-  if (tarefas.length) tarefas.forEach((e) => lines.push(`- [${e.done ? "x" : " "}] ${e.summary || "-"}`));
+  if (tarefas.length) tarefas.forEach((e) => lines.push(`- [${e.done ? "x" : " "}] ${vehPrefix(e)}${e.summary || "-"}`));
   else lines.push("- (nenhuma)");
   lines.push("");
   lines.push(heading(`Notas / Observações (${notas.length})`));
-  if (notas.length) notas.forEach((e) => lines.push(`- ${e.summary || "-"}`));
+  if (notas.length) notas.forEach((e) => lines.push(`- ${vehPrefix(e)}${e.summary || "-"}`));
   else lines.push("- (nenhuma)");
   return lines.join("\n");
 }

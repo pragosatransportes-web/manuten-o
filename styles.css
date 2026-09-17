@@ -1388,6 +1388,13 @@ body.modal-open { overflow: hidden; }
   font-size: 13px;
 }
 .plan-equip--none { border-top: none; }
+/* Agrupamento das ausências por responsável de logística. */
+.plan-group { margin-bottom: 16px; }
+.plan-group__head { display: flex; align-items: center; gap: 8px; margin: 6px 0 8px; font-size: 14px; color: var(--ink); border-bottom: 2px solid var(--accent); padding-bottom: 4px; }
+.plan-group__n { font-size: 11px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 999px; padding: 1px 8px; }
+.plan-conjunto { font-size: 11px; font-weight: 600; color: var(--accent); background: var(--accent-pale); border-radius: 4px; padding: 0 5px; }
+.plan-oficina { font-size: 11px; font-weight: 600; color: #92400e; background: #fef3c7; border-radius: 4px; padding: 0 5px; }
+.ausencia-veh-preview { margin: -4px 0 8px; padding: 8px 10px; font-size: 13px; background: var(--accent-pale); border: 1px solid var(--line); border-radius: var(--radius-sm); }
 .plan-dues {
   display: flex;
   flex-wrap: wrap;

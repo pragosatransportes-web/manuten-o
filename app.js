@@ -574,6 +574,10 @@ document.addEventListener("input", (event) => {
   if (target.id === "new-plate") {
     fillFleetMatchFromPlate(target.value, false);
   }
+  if (target.id === "ausencia-driver") {
+    const el = document.querySelector("#ausencia-veh-preview");
+    if (el) el.innerHTML = ausenciaVehiclePreviewHtml(target.value);
+  }
 });
 
 document.addEventListener("change", async (event) => {
@@ -2495,8 +2499,8 @@ function editMeetingEventFromReport(meetingId, eventId) {
 const NAV_GROUPS = [
   { id: "dashboard", label: "Dashboard", views: [["dashboard", "Dashboard"]] },
   { id: "manutencao", label: "Manutenção", views: [["gantt", "Planeamento"], ["breakdowns", "Ocorrências"], ["meeting", "Reuniões"]] },
-  { id: "frota", label: "Frota", views: [["fleet", "Viaturas"], ["fleet-inativas", "Inativas"], ["vistoria", "Vistorias"], ["definicoes", "Definições"]] },
-  { id: "entidades", label: "Entidades", views: [["entidades", "Entidades"], ["ausencias", "Ausências"]] },
+  { id: "frota", label: "Frota", views: [["fleet", "Viaturas"], ["fleet-inativas", "Inativas"], ["vistoria", "Vistorias"], ["ausencias", "Ausências"], ["definicoes", "Definições"]] },
+  { id: "entidades", label: "Entidades", views: [["entidades", "Entidades"]] },
   { id: "analise", label: "Análise", views: [["audit", "Rastreio"]] }
 ];
 
@@ -5722,37 +5726,76 @@ function renderAusenciaCalendar(monthISO, list) {
   `;
 }
 
+// Responsável de logística de um motorista, deduzido da(s) sua(s) viatura(s).
+function driverLogisticsResp(driver) {
+  for (const v of fleetForDriver(driver)) {
+    if (v.logisticsResp) return v.logisticsResp;
+  }
+  return "";
+}
+
+// Viaturas do motorista + os respetivos conjuntos (partner), sem duplicar.
+function driverVehiclesWithConjunto(driver) {
+  const own = fleetForDriver(driver);
+  const seen = new Set();
+  const out = [];
+  own.forEach((f) => {
+    const k = String(f.equipment);
+    if (!seen.has(k)) { seen.add(k); out.push({ f, conjunto: false }); }
+    if (f.partnerEquipment) {
+      const p = state.fleet.find((x) => String(x.equipment) === String(f.partnerEquipment));
+      if (p && !seen.has(String(p.equipment))) { seen.add(String(p.equipment)); out.push({ f: p, conjunto: true }); }
+    }
+  });
+  return out;
+}
+
+function absencePlanCard(a) {
+  const vehicles = driverVehiclesWithConjunto(a.driver);
+  const equipHtml = vehicles.length
+    ? vehicles.map(({ f, conjunto }) => {
+        const dues = fleetDueList(f);
+        const badges = dues.length
+          ? dues.map((x) => `<span class="plan-due">${escapeHtml(x.label)} ${renderDueBadge(x.value)}</span>`).join("")
+          : `<span class="muted">sem datas de manutenção</span>`;
+        return `<div class="plan-equip"><strong>Equip. ${escapeHtml(f.equipment)}</strong> · ${escapeHtml(f.plate || "-")} <span class="muted">${escapeHtml(f.description || "")}</span>${conjunto ? ` <span class="plan-conjunto">🔗 conjunto</span>` : ""} <span class="plan-oficina">🔧 disponível p/ oficina</span><div class="plan-dues">${badges}</div></div>`;
+      }).join("")
+    : `<div class="plan-equip plan-equip--none muted">Sem equipamento associado a este motorista.</div>`;
+  return `
+    <div class="plan-card">
+      <div class="plan-head">
+        <span class="cal-abs cal-abs--${absenceClass(a.type)}">${escapeHtml(a.type)}</span>
+        <strong>${escapeHtml(a.driver)}</strong>
+        <span class="plan-dates">${formatDate(a.startAt)} → ${formatDate(a.endAt)} · ${absenceDays(a)} d</span>
+      </div>
+      ${equipHtml}
+    </div>`;
+}
+
 function renderAusenciaPlanning(monthAbs, monthISO) {
   const label = new Intl.DateTimeFormat("pt-PT", { month: "long" }).format(new Date(`${monthISO}-01T00:00:00`));
   if (!monthAbs.length) {
     return `<div class="panel-sub"><h3>Janelas de manutenção</h3><p class="muted">Sem ausências em ${escapeHtml(label)}.</p></div>`;
   }
-  const cards = monthAbs.map((a) => {
-    const equips = fleetForDriver(a.driver);
-    const equipHtml = equips.length
-      ? equips.map((f) => {
-          const dues = fleetDueList(f);
-          const badges = dues.length
-            ? dues.map((x) => `<span class="plan-due">${escapeHtml(x.label)} ${renderDueBadge(x.value)}</span>`).join("")
-            : `<span class="muted">sem datas de manutenção</span>`;
-          return `<div class="plan-equip"><strong>Equip. ${escapeHtml(f.equipment)}</strong> · ${escapeHtml(f.plate || "-")} <span class="muted">${escapeHtml(f.description || "")}</span><div class="plan-dues">${badges}</div></div>`;
-        }).join("")
-      : `<div class="plan-equip plan-equip--none muted">Sem equipamento associado a este motorista.</div>`;
-    return `
-      <div class="plan-card">
-        <div class="plan-head">
-          <span class="cal-abs cal-abs--${absenceClass(a.type)}">${escapeHtml(a.type)}</span>
-          <strong>${escapeHtml(a.driver)}</strong>
-          <span class="plan-dates">${formatDate(a.startAt)} → ${formatDate(a.endAt)} · ${absenceDays(a)} d</span>
-        </div>
-        ${equipHtml}
-      </div>`;
-  }).join("");
+  // Agrupar as ausências por Responsável de Logística (derivado da viatura do motorista).
+  const groups = new Map();
+  const order = [];
+  monthAbs.forEach((a) => {
+    const resp = driverLogisticsResp(a.driver) || RESP_NENHUM;
+    if (!groups.has(resp)) { groups.set(resp, []); order.push(resp); }
+    groups.get(resp).push(a);
+  });
+  order.sort((x, y) => x === RESP_NENHUM ? 1 : y === RESP_NENHUM ? -1 : x.localeCompare(y, "pt"));
+  const sections = order.map((resp) => `
+      <div class="plan-group">
+        <h4 class="plan-group__head">👤 ${escapeHtml(resp)} <span class="plan-group__n">${groups.get(resp).length}</span></h4>
+        ${groups.get(resp).map(absencePlanCard).join("")}
+      </div>`).join("");
   return `
     <div class="panel-sub">
       <h3>Janelas de manutenção durante ausências</h3>
-      <p class="muted">Equipamentos livres enquanto o motorista está ausente, e as próximas datas a vencer.</p>
-      ${cards}
+      <p class="muted">Agrupadas por responsável de logística. Enquanto o motorista está ausente, a sua viatura e o respetivo conjunto (trator + reboque) ficam disponíveis para oficina.</p>
+      ${sections}
     </div>`;
 }
 
@@ -5837,14 +5880,25 @@ function shiftAusenciaMonth(delta) {
   render();
 }
 
+// Texto de identificação da viatura alocada ao motorista (+ conjunto) no modal de ausência.
+function ausenciaVehiclePreviewHtml(driver) {
+  if (!String(driver || "").trim()) return `<span class="muted">Escolhe o motorista para ver a viatura alocada.</span>`;
+  const vehicles = driverVehiclesWithConjunto(driver);
+  if (!vehicles.length) return `<span class="muted">Sem viatura associada a este motorista.</span>`;
+  const parts = vehicles.map(({ f, conjunto }) => `${conjunto ? "🔗 " : ""}${f.plate || "—"} (Equip. ${f.equipment}${conjunto ? " · conjunto" : ""})`);
+  const resp = driverLogisticsResp(driver);
+  return `🚚 Alocado a: <strong>${parts.map(escapeHtml).join("</strong> · <strong>")}</strong>${resp ? ` · Resp.: <strong>${escapeHtml(resp)}</strong>` : ""}<br><span class="muted">O conjunto fica disponível para oficina durante a ausência.</span>`;
+}
+
 function openAusenciaModal() {
   const drivers = distinctFleetDrivers();
   const body = `
     <form class="modal-form" data-form="new-ausencia">
       <label class="field field--wide">Motorista *
-        <input name="driver" list="ausencia-drivers" required placeholder="Nome do motorista">
+        <input id="ausencia-driver" name="driver" list="ausencia-drivers" required placeholder="Nome do motorista" autocomplete="off">
         <datalist id="ausencia-drivers">${drivers.map((d) => `<option value="${escapeAttr(d)}"></option>`).join("")}</datalist>
       </label>
+      <p class="ausencia-veh-preview" id="ausencia-veh-preview">${ausenciaVehiclePreviewHtml("")}</p>
       <div class="field-row">
         <label class="field">Tipo<select name="type">${ABSENCE_TYPES.map((t) => `<option value="${escapeAttr(t)}">${escapeHtml(t)}</option>`).join("")}</select></label>
         <label class="field">Início *<input type="date" name="startAt" required></label>

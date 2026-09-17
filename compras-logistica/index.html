@@ -630,7 +630,6 @@ function toolbarHTML(showEstado){
   const cats=[...new Set(state.linhas.map(l=>l.categoria))].filter(Boolean).sort();
   const ors=[...new Set(state.linhas.map(l=>l.origem))].filter(Boolean).sort();
   const tps=state.transp.slice().sort((a,b)=>a.nome.localeCompare(b.nome)).map(t=>({v:t.id,l:t.nome}));
-  const active=filters.q||filters.cats.length||filters.transps.length||filters.origens.length||filters.estados.length||filters.kmMin!==""||filters.kmMax!=="";
   return `<div class="toolbar">
     <input id="flt-q" type="text" placeholder="Procurar rota, transportador, nº NE…" value="${esc(filters.q)}" oninput="fltSearch(this)">
     ${msDropdown("cats","Categorias",cats.map(c=>({v:c,l:c})))}
@@ -638,9 +637,11 @@ function toolbarHTML(showEstado){
     ${msDropdown("origens","Origens",ors.map(o=>({v:o,l:o})))}
     ${showEstado?msDropdown("estados","Estados",Object.entries(ESTADOS).map(([k,v])=>({v:k,l:v.label}))):""}
     <span class="km-flt">Km <input id="flt-kmin" type="number" step="1" placeholder="mín" value="${esc(filters.kmMin)}" oninput="fltNum(this,'kmMin')"> – <input id="flt-kmax" type="number" step="1" placeholder="máx" value="${esc(filters.kmMax)}" oninput="fltNum(this,'kmMax')"></span>
-    ${active?`<button class="btn sm" onclick="limparFiltros()">Limpar</button>`:""}
+    <button class="btn sm" id="flt-clear" onclick="limparFiltros()" ${filtrosAtivos()?"":"hidden"}>✕ Limpar filtros</button>
   </div>`;
 }
+function filtrosAtivos(){return !!(filters.q||filters.cats.length||filters.transps.length||filters.origens.length||filters.estados.length||filters.kmMin!==""||filters.kmMax!=="")}
+function updateClearBtn(){const b=document.getElementById("flt-clear");if(b)b.hidden=!filtrosAtivos()}
 function toggleMs(key){const p=document.getElementById("ms-"+key);if(!p)return;const abrir=p.hidden;document.querySelectorAll(".ms-panel").forEach(x=>x.hidden=true);p.hidden=!abrir;if(!p.hidden){const q=document.getElementById("ms-q-"+key);if(q)setTimeout(()=>q.focus(),30)}}
 function msChange(cb){
   const wrap=cb.closest(".ms"),key=wrap.dataset.key,v=cb.value;
@@ -649,10 +650,10 @@ function msChange(cb){
   const btn=wrap.querySelector(".ms-btn"),n=arr.length;
   btn.classList.toggle("on",!!n);
   btn.querySelector(".ms-lbl").textContent=btn.getAttribute("data-label")+(n?" · "+n:"");
-  renderBody();
+  renderBody();updateClearBtn();
 }
-function fltSearch(el){filters.q=el.value;renderBody()}
-function fltNum(el,key){filters[key]=el.value;renderBody()}
+function fltSearch(el){filters.q=el.value;renderBody();updateClearBtn()}
+function fltNum(el,key){filters[key]=el.value;renderBody();updateClearBtn()}
 function limparFiltros(){filters={q:"",cats:[],transps:[],origens:[],estados:[],kmMin:"",kmMax:""};render()}
 function renderCur(){renderBody()}
 function renderBody(){
@@ -893,7 +894,7 @@ function renderTransp(){
   $("#sec-transp").innerHTML=`
     <div class="sh"><div><h2>Transportadores</h2><div class="sub"><span id="transp-count"></span> registados</div></div>
       ${editable?`<button class="btn primary" onclick="novoTransp()">+ Novo transportador</button>`:`<span class="chip">Só leitura (perfil ${esc(perfil)})</span>`}</div>
-    <div class="toolbar"><input id="flt-qt" type="text" placeholder="Procurar…" value="${esc(filters.q)}" oninput="filters.q=this.value;renderTranspBody()">${filters.q?`<button class="btn sm" onclick="filters.q='';renderTransp()">Limpar</button>`:""}</div>
+    <div class="toolbar"><input id="flt-qt" type="text" placeholder="Procurar…" value="${esc(filters.q)}" oninput="filters.q=this.value;renderTranspBody();var b=document.getElementById('flt-clear-t');if(b)b.hidden=!this.value"><button class="btn sm" id="flt-clear-t" onclick="filters.q='';renderTransp()" ${filters.q?"":"hidden"}>✕ Limpar</button></div>
     <div class="table-wrap"><table>
       <thead><tr><th>ID</th><th>Nome</th><th>NIF</th><th>Telefone</th><th>Email</th><th>Ativo</th><th></th></tr></thead>
       <tbody id="transp-body"></tbody>

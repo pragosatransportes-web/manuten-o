@@ -302,6 +302,8 @@ input[readonly] { color: var(--muted); background: #f9fafb; }
    Atualizar estados, concluir, editar e acrescentar ficam livres. */
 body:not(.admin-mode) .admin-reassign { display: none; }
 body:not(.admin-mode) .admin-only { display: none; }
+/* Estado na coluna: fora do admin mostra o texto; em admin mostra o dropdown. */
+body.admin-mode .fleet-status-view { display: none; }
 .admin-reassign { margin: 12px 0; padding: 12px 14px; border: 1px dashed var(--amber); border-radius: var(--radius-sm); background: #fffbeb; }
 .admin-reassign__title { margin: 0 0 4px; font-size: 12px; font-weight: 700; color: var(--amber); }
 .admin-reassign__hint { margin: 0 0 8px; font-size: 11.5px; color: var(--muted); }

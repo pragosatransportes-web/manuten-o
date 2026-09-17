@@ -2491,7 +2491,7 @@ function editMeetingEventFromReport(meetingId, eventId) {
 const NAV_GROUPS = [
   { id: "dashboard", label: "Dashboard", views: [["dashboard", "Dashboard"]] },
   { id: "manutencao", label: "Manutenção", views: [["gantt", "Planeamento"], ["breakdowns", "Ocorrências"], ["meeting", "Reuniões"]] },
-  { id: "frota", label: "Frota", views: [["fleet", "Viaturas"], ["vistoria", "Vistorias"], ["definicoes", "Definições"]] },
+  { id: "frota", label: "Frota", views: [["fleet", "Viaturas"], ["fleet-inativas", "Inativas"], ["vistoria", "Vistorias"], ["definicoes", "Definições"]] },
   { id: "entidades", label: "Entidades", views: [["entidades", "Entidades"], ["ausencias", "Ausências"]] },
   { id: "analise", label: "Análise", views: [["audit", "Rastreio"]] }
 ];
@@ -2538,6 +2538,7 @@ function render(focusSelector = "") {
     gantt: renderGantt,
     new: renderNewBreakdown,
     fleet: renderFleet,
+    "fleet-inativas": renderFleet,
     vistoria: renderVistoria,
     definicoes: renderDefinicoes,
     entidades: renderEntidades,
@@ -4034,24 +4035,25 @@ function renderFleet() {
     if (item.status !== "Concluido") acc[item.equipment] = (acc[item.equipment] || 0) + 1;
     return acc;
   }, {});
-  const list = getFilteredFleet();
+  const inactiveView = state.currentView === "fleet-inativas";
+  const list = getFilteredFleet().filter((item) => inactiveView ? isFleetInactive(item) : !isFleetInactive(item));
   const fleetView = state.fleetView === "table" ? "table" : "cards";
-
-  const fleetStatuses = seed.options?.fleetStatuses || ["Ativa", "Manutencao preventiva", "Vendida", "Abatida", "Cedida", "Inativa", "Alugada"];
+  const inactiveTotal = state.fleet.filter(isFleetInactive).length;
 
   return `
     <section class="panel">
       <div class="panel-header">
         <div>
-          <p class="eyebrow">Frota</p>
-          <h2>Viaturas</h2>
-          <p>${list.length} registos encontrados</p>
+          <p class="eyebrow">Frota${inactiveView ? " · arquivo" : ""}</p>
+          <h2>${inactiveView ? "Viaturas inativas" : "Viaturas ativas"}</h2>
+          <p>${list.length} ${list.length === 1 ? "viatura" : "viaturas"}${inactiveView ? "" : ` · ${inactiveTotal} inativa${inactiveTotal === 1 ? "" : "s"} no arquivo`}</p>
         </div>
         <div class="panel-header__actions">
-          ${(typeof trelloSettings !== "undefined" && trelloSettings.key) ? `<button class="ghost-button" type="button" data-action="import-drivers-trello" title="Importar o motorista de cada viatura a partir do cartão &quot;motorista associado&quot; no Trello"><span data-icon="rotate"></span><span>Importar motoristas (Trello)</span></button>` : ""}
-          <button class="primary-button" type="button" data-action="new-fleet-modal"><span data-icon="plus"></span><span>Adicionar viatura</span></button>
+          ${inactiveView ? "" : (typeof trelloSettings !== "undefined" && trelloSettings.key) ? `<button class="ghost-button" type="button" data-action="import-drivers-trello" title="Importar o motorista de cada viatura a partir do cartão &quot;motorista associado&quot; no Trello"><span data-icon="rotate"></span><span>Importar motoristas (Trello)</span></button>` : ""}
+          ${inactiveView ? "" : `<button class="primary-button" type="button" data-action="new-fleet-modal"><span data-icon="plus"></span><span>Adicionar viatura</span></button>`}
         </div>
       </div>
+      ${inactiveView ? `<p class="fleet-scope-note">Viaturas marcadas como <strong>Inativa</strong> — mantidas para consulta de histórico, fora do painel de ativas. Muda o Estado para <strong>Ativa</strong> (modo admin) para as trazer de volta.</p>` : ""}
       <div class="toolbar fleet-toolbar">
         <input type="search" data-filter="fleetSearch" value="${escapeAttr(state.filters.fleetSearch)}" placeholder="Pesquisar equipamento, matrícula ou marca">
         <div class="fleet-viewtoggle" role="group" aria-label="Modo de visualização">
@@ -4080,6 +4082,7 @@ function renderFleetTable(list, activeCounts) {
               <th>Estado</th>
               <th>Empresa</th>
               <th>Motorista</th>
+              <th>Respons.</th>
               <th>Oficina preferencial</th>
               <th>Avarias abertas</th>
               <th>Inspeção</th>
@@ -4098,9 +4101,10 @@ function renderFleetTable(list, activeCounts) {
                 <td>${renderFleetDescriptionCell(item)}</td>
                 <td>${escapeHtml(item.brand || item.model || "-")}</td>
                 <td>${escapeHtml(item.year || "-")}</td>
-                <td>${escapeHtml(item.status || "-")}</td>
+                <td>${renderFleetStatusColumn(item)}</td>
                 <td>${renderFleetCompanyCell(item)}</td>
                 <td>${renderFleetDriverCell(item)}</td>
+                <td>${renderFleetLogisticsCell(item)}</td>
                 <td>${renderFleetOficinaCell(item)}</td>
                 <td>${activeCounts[item.equipment] || 0}</td>
                 <td>${renderFleetDateCell(item, "inspectionAt", "Data de inspeção")}</td>
@@ -4566,7 +4570,11 @@ async function applyLogisticsRespToConjunto(equipment) {
 }
 
 function fleetStatusList() {
-  return seed.options?.fleetStatuses || ["Ativa", "Manutencao preventiva", "Vendida", "Abatida", "Cedida", "Inativa", "Alugada"];
+  return ["Ativa", "Inativa"];
+}
+// Inativa = qualquer estado que não seja "Ativa" (inclui valores antigos: Vendida, Abatida, Cedida, etc.).
+function isFleetInactive(item) {
+  return normalizeText(item && item.status) !== "ativa";
 }
 
 function openFleetModal() {
@@ -4593,6 +4601,12 @@ function openFleetModal() {
       </div>
     </form>`;
   openModal("Adicionar viatura", body);
+}
+
+// Estado numa coluna: texto simples fora do modo admin, dropdown Ativa/Inativa em admin.
+function renderFleetStatusColumn(item) {
+  const cls = normalizeText(item.status) === "ativa" ? "fleet-status--ativa" : "fleet-status--outro";
+  return `<span class="fleet-status-view fleet-status ${cls}">${escapeHtml(item.status || "-")}</span><span class="admin-only">${renderFleetStatusCell(item)}</span>`;
 }
 
 function renderFleetStatusCell(item) {

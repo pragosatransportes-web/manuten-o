@@ -149,6 +149,7 @@ tr.row-rascunho-old td:first-child{box-shadow:inset 4px 0 0 var(--red)}
 .ms-opt{display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:5px;font-size:12.5px;cursor:pointer;white-space:nowrap}
 .ms-opt:hover{background:var(--surface-2)}
 .ms-opt input{width:auto;margin:0}
+.ms-search{width:100%;font-family:inherit;font-size:12px;padding:6px 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text);margin-bottom:6px;position:sticky;top:0}
 .km-flt{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text-2)}
 .km-flt input{width:64px;font-family:inherit;font-size:12px;padding:6px 7px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text)}
 /* colunas ajustáveis */
@@ -607,12 +608,23 @@ function applyFilters(list){
 }
 function msDropdown(key,label,opts){
   const sel=filters[key]||[];const n=sel.length;
+  const searchable=opts.length>8;
   return `<div class="ms" data-key="${key}">
     <button type="button" class="ms-btn${n?" on":""}" data-label="${esc(label)}" onclick="toggleMs('${key}')"><span class="ms-lbl">${esc(label)}${n?" · "+n:""}</span> ▾</button>
     <div class="ms-panel" id="ms-${key}" hidden>
-      ${opts.map(o=>`<label class="ms-opt"><input type="checkbox" value="${esc(o.v)}" ${sel.includes(o.v)?"checked":""} onchange="msChange(this)"><span>${esc(o.l)}</span></label>`).join("")||'<div class="muted" style="padding:6px">Sem opções</div>'}
+      ${searchable?`<input type="text" class="ms-search" id="ms-q-${key}" placeholder="Procurar…" oninput="filterMsOpts('${key}',this.value)">`:""}
+      <div class="ms-list" id="ms-list-${key}">
+      ${opts.map(o=>`<label class="ms-opt" data-txt="${esc((o.l+" "+o.v).toLowerCase())}"><input type="checkbox" value="${esc(o.v)}" ${sel.includes(o.v)?"checked":""} onchange="msChange(this)"><span>${esc(o.l)}</span></label>`).join("")||'<div class="muted" style="padding:6px">Sem opções</div>'}
+      </div>
     </div>
   </div>`;
+}
+function filterMsOpts(key,v){
+  const s=(v||"").toLowerCase().trim();
+  document.querySelectorAll("#ms-list-"+key+" .ms-opt").forEach(l=>{
+    const t=l.getAttribute("data-txt")||"";
+    l.style.display=(s&&t.indexOf(s)<0)?"none":"";
+  });
 }
 function toolbarHTML(showEstado){
   const cats=[...new Set(state.linhas.map(l=>l.categoria))].filter(Boolean).sort();
@@ -629,7 +641,7 @@ function toolbarHTML(showEstado){
     ${active?`<button class="btn sm" onclick="limparFiltros()">Limpar</button>`:""}
   </div>`;
 }
-function toggleMs(key){const p=document.getElementById("ms-"+key);if(!p)return;const abrir=p.hidden;document.querySelectorAll(".ms-panel").forEach(x=>x.hidden=true);p.hidden=!abrir}
+function toggleMs(key){const p=document.getElementById("ms-"+key);if(!p)return;const abrir=p.hidden;document.querySelectorAll(".ms-panel").forEach(x=>x.hidden=true);p.hidden=!abrir;if(!p.hidden){const q=document.getElementById("ms-q-"+key);if(q)setTimeout(()=>q.focus(),30)}}
 function msChange(cb){
   const wrap=cb.closest(".ms"),key=wrap.dataset.key,v=cb.value;
   const arr=filters[key]=filters[key]||[];const i=arr.indexOf(v);

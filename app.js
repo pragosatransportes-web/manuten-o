@@ -276,7 +276,8 @@ const icons = {
 let state = loadState();
 
 document.addEventListener("click", async (event) => {
-  const button = event.target.closest("button");
+  // Apanha botões e também elementos não-botão com data-action (ex.: células do mapa de ausências).
+  const button = event.target.closest("button, [data-action]");
   if (!button) return;
 
   const view = button.dataset.view;
@@ -481,6 +482,12 @@ document.addEventListener("click", async (event) => {
     state.filters.ausenciaResp = button.dataset.resp || "";
     saveState();
     render();
+  }
+  if (action === "ausencia-cell") {
+    openAusenciaCellDetail(button.dataset.driver || "", Number(button.dataset.month));
+  }
+  if (action === "ausencia-day") {
+    openAusenciaDayDetail(button.dataset.date || "");
   }
   if (action === "delete-ausencia") {
     await deleteAusencia(button.dataset.id);
@@ -5808,12 +5815,13 @@ function renderAusenciaYear(allAbs) {
     const cells = [];
     for (let m = 0; m < 12; m++) {
       const days = driverDayMonth[dr][m];
-      if (!days || !days.size) { cells.push(`<td class="aus-cell aus-cell--empty">—</td>`); continue; }
+      const dataAttr = `data-action="ausencia-cell" data-driver="${escapeAttr(dr)}" data-month="${m}"`;
+      if (!days || !days.size) { cells.push(`<td class="aus-cell aus-cell--empty" ${dataAttr}>—</td>`); continue; }
       const count = days.size;
       total += count;
       let lvl = 0;
       days.forEach((iso) => { lvl = Math.max(lvl, dayDrivers[iso].size); });
-      cells.push(`<td class="aus-cell aus-cell--${ausCoverageClass(lvl)}" title="${escapeAttr(`${dr} · ${AUS_MONTHS[m]}: ${count} dia(s) · ${lvl} em simultâneo`)}">${count}</td>`);
+      cells.push(`<td class="aus-cell aus-cell--${ausCoverageClass(lvl)}" ${dataAttr} title="${escapeAttr(`${dr} · ${AUS_MONTHS[m]}: ${count} dia(s) · ${lvl} em simultâneo — clicar para detalhe`)}">${count}</td>`);
     }
     const resp = driverLogisticsResp(dr);
     return `
@@ -5854,6 +5862,115 @@ function renderAusenciaYear(allAbs) {
     </div>`;
 }
 
+// Motoristas ausentes num dado dia (todas as ausências).
+function driversAbsentOnDay(iso) {
+  const set = new Set();
+  (state.ausencias || []).forEach((a) => { if (a.startAt && a.endAt && iso >= a.startAt && iso <= a.endAt) set.add(a.driver); });
+  return set;
+}
+
+// Ausências de um motorista que tocam num mês (month 0-11) de um ano.
+function absencesForDriverMonth(driver, year, month) {
+  const mEndDay = new Date(year, month + 1, 0).getDate();
+  const mStart = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  const mEnd = `${year}-${String(month + 1).padStart(2, "0")}-${String(mEndDay).padStart(2, "0")}`;
+  return (state.ausencias || []).filter((a) => a.driver === driver && a.startAt && a.endAt && a.startAt <= mEnd && a.endAt >= mStart);
+}
+
+// Mini-calendário do mês com os dias de ausência realçados (colorido por cobertura).
+function ausenciaMiniCalHtml(year, month, driverDaysSet) {
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startMon = (new Date(year, month, 1).getDay() + 6) % 7;
+  const weekdays = ["S", "T", "Q", "Q", "S", "S", "D"];
+  const cells = [];
+  for (let i = 0; i < startMon; i++) cells.push(`<div class="aus-mini-cell aus-mini-cell--empty"></div>`);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const dow = (startMon + d - 1) % 7;
+    const isWk = dow >= 5;
+    if (driverDaysSet.has(d)) {
+      const lvl = driversAbsentOnDay(iso).size;
+      cells.push(`<div class="aus-mini-cell aus-mini-cell--${ausCoverageClass(lvl)}" title="${escapeAttr(`${lvl} pessoa(s) ausente(s) neste dia`)}">${d}</div>`);
+    } else {
+      cells.push(`<div class="aus-mini-cell${isWk ? " aus-mini-cell--wk" : ""}">${d}</div>`);
+    }
+  }
+  return `
+    <div class="aus-mini-grid aus-mini-grid--head">${weekdays.map((w) => `<div class="aus-mini-head">${w}</div>`).join("")}</div>
+    <div class="aus-mini-grid">${cells.join("")}</div>`;
+}
+
+// Janela dinâmica: detalhe do mês de um motorista (a partir de uma célula do mapa anual).
+function openAusenciaCellDetail(driver, month) {
+  if (!driver || !Number.isFinite(month)) return;
+  const year = state.ausenciaYear || new Date().getFullYear();
+  const monthName = new Intl.DateTimeFormat("pt-PT", { month: "long" }).format(new Date(year, month, 1));
+  const abs = absencesForDriverMonth(driver, year, month).sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)));
+
+  // Dias (nº do mês) em que o motorista está ausente neste mês/ano.
+  const driverDays = new Set();
+  const mEndDay = new Date(year, month + 1, 0).getDate();
+  abs.forEach((a) => {
+    for (let d = 1; d <= mEndDay; d++) {
+      const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      if (iso >= a.startAt && iso <= a.endAt) driverDays.add(d);
+    }
+  });
+
+  const resp = driverLogisticsResp(driver);
+  const absList = abs.length
+    ? abs.map((a) => `<li><span class="cal-abs cal-abs--${absenceClass(a.type)}">${escapeHtml(a.type)}</span> ${formatDate(a.startAt)} → ${formatDate(a.endAt)} · <strong>${absenceDays(a)} d</strong>${a.notes ? ` <span class="muted">· ${escapeHtml(a.notes)}</span>` : ""}</li>`).join("")
+    : `<li class="muted">Sem ausências neste mês.</li>`;
+
+  const vehicles = driverVehiclesWithConjunto(driver);
+  const vehHtml = vehicles.length
+    ? vehicles.map(({ f, conjunto }) => {
+        const dues = fleetDueList(f);
+        const badges = dues.length ? dues.map((x) => `<span class="plan-due">${escapeHtml(x.label)} ${renderDueBadge(x.value)}</span>`).join("") : `<span class="muted">sem datas</span>`;
+        return `<div class="plan-equip"><strong>Equip. ${escapeHtml(f.equipment)}</strong> · ${escapeHtml(f.plate || "-")}${conjunto ? ` <span class="plan-conjunto">🔗 conjunto</span>` : ""} <span class="plan-oficina">🔧 disponível p/ oficina</span><div class="plan-dues">${badges}</div></div>`;
+      }).join("")
+    : `<p class="muted">Sem viatura associada a este motorista.</p>`;
+
+  const body = `
+    <div class="aus-detail">
+      <div class="aus-detail__head">
+        <span class="aus-ava">${escapeHtml(driverInitials(driver))}</span>
+        <div><strong>${escapeHtml(driver)}</strong><small>${escapeHtml(monthName)} ${year} · ${driverDays.size} dia(s) de ausência${resp ? ` · Resp.: ${escapeHtml(resp)}` : ""}</small></div>
+      </div>
+      ${ausenciaMiniCalHtml(year, month, driverDays)}
+      <div class="aus-detail__sec"><h4>Ausências</h4><ul class="aus-detail__list">${absList}</ul></div>
+      <div class="aus-detail__sec"><h4>Viatura e conjunto (disponível para oficina)</h4>${vehHtml}</div>
+      <div class="modal-form__actions"><button type="button" class="ghost-button" data-action="close-modal">Fechar</button></div>
+    </div>`;
+  openModal(`Ausências · ${monthName} ${year}`, body);
+}
+
+// Janela dinâmica: detalhe de um dia do calendário mensal (quem está ausente).
+function openAusenciaDayDetail(dateISO) {
+  if (!dateISO) return;
+  const dayAbs = (state.ausencias || []).filter((a) => a.startAt && a.endAt && dateISO >= a.startAt && dateISO <= a.endAt)
+    .sort((a, b) => (a.driver || "").localeCompare(b.driver || "", "pt"));
+  const dLabel = formatDate(dateISO);
+  const items = dayAbs.length
+    ? dayAbs.map((a) => {
+        const resp = driverLogisticsResp(a.driver);
+        const vehicles = driverVehiclesWithConjunto(a.driver);
+        const veh = vehicles.length ? vehicles.map(({ f, conjunto }) => `${conjunto ? "🔗 " : ""}${escapeHtml(f.plate || "—")}`).join(" · ") : "sem viatura";
+        return `<li>
+          <div><span class="cal-abs cal-abs--${absenceClass(a.type)}">${escapeHtml(a.type)}</span> <strong>${escapeHtml(a.driver)}</strong>${resp ? ` <span class="muted">· ${escapeHtml(resp)}</span>` : ""}</div>
+          <div class="muted">${formatDate(a.startAt)} → ${formatDate(a.endAt)} · 🚚 ${veh} <span class="plan-oficina">🔧 disponível p/ oficina</span></div>
+        </li>`;
+      }).join("")
+    : `<li class="muted">Ninguém ausente neste dia.</li>`;
+  const body = `
+    <div class="aus-detail">
+      <p class="muted">${dayAbs.length} motorista(s) ausente(s) — coordena as janelas de oficina.</p>
+      <ul class="aus-detail__list aus-detail__list--day">${items}</ul>
+      <div class="modal-form__actions"><button type="button" class="ghost-button" data-action="close-modal">Fechar</button></div>
+    </div>`;
+  openModal(`Ausências · ${dLabel}`, body);
+}
+
 function renderAusenciaCalendar(monthISO, list) {
   const { daysInMonth, year, month } = monthBounds(monthISO);
   const first = new Date(year, month - 1, 1);
@@ -5870,7 +5987,8 @@ function renderAusenciaCalendar(monthISO, list) {
     const chips = dayAbs
       .map((a) => `<span class="cal-abs cal-abs--${absenceClass(a.type)}" title="${escapeAttr(`${a.driver} · ${a.type}`)}">${escapeHtml(a.driver)}</span>`)
       .join("");
-    cells.push(`<div class="cal-cell${dateISO === today ? " cal-cell--today" : ""}"><span class="cal-day">${d}</span>${chips}</div>`);
+    const clickable = dayAbs.length ? ` data-action="ausencia-day" data-date="${dateISO}"` : "";
+    cells.push(`<div class="cal-cell${dateISO === today ? " cal-cell--today" : ""}${dayAbs.length ? " cal-cell--has" : ""}"${clickable}><span class="cal-day">${d}</span>${chips}</div>`);
   }
 
   return `

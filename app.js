@@ -6149,6 +6149,7 @@ function renderAusenciaCalendar(monthISO, list) {
 
   const drivers = distinctFleetDrivers();
   const dirty = paintDirty(monthISO);
+  const nDias = Object.keys(paint.days).length;
   const paintBar = `
     <div class="cal-paintbar${painting ? " cal-paintbar--on" : ""}">
       <label class="cal-paintbar__f">Marcar férias de:
@@ -6157,15 +6158,28 @@ function renderAusenciaCalendar(monthISO, list) {
           ${drivers.map((dr) => `<option value="${escapeAttr(dr)}"${dr === paint.driver ? " selected" : ""}>${escapeHtml(dr)}</option>`).join("")}
         </select>
       </label>
-      ${painting ? `
-      <label class="cal-paintbar__f">Tipo:
-        <select data-ausencia-paint="type">${ABSENCE_TYPES.map((t) => `<option value="${escapeAttr(t)}"${normalizeText(t) === normalizeText(paint.type) ? " selected" : ""}>${escapeHtml(t)}</option>`).join("")}</select>
-      </label>
-      <span class="cal-paintbar__hint">Clica nos dias para marcar/desmarcar · <strong>${Object.keys(paint.days).length}</strong> dia(s)${dirty ? " · alterações por guardar" : ""}</span>
-      ${dirty ? `<button class="primary-button" type="button" data-action="ausencia-paint-save"><span data-icon="check"></span><span>Guardar</span></button>` : ""}
-      <button class="ghost-button" type="button" data-action="ausencia-paint-cancel">${dirty ? "Cancelar" : "Fechar edição"}</button>
-      ` : ""}
+      ${painting ? `<span class="cal-paintbar__hint">Clica nos dias para marcar/desmarcar — confirma na <strong>caixa vermelha</strong>.</span>` : ""}
     </div>`;
+
+  // Caixa volante (flutuante, a vermelho) — só visível durante a marcação.
+  const paintFloat = painting ? `
+    <div class="cal-paint-float" role="dialog" aria-label="Marcação de férias">
+      <div class="cal-paint-float__head">
+        <span class="cal-paint-float__dot"></span>
+        <span>A marcar <strong>${escapeHtml(paint.type)}</strong> — <strong>${escapeHtml(paint.driver)}</strong></span>
+        <button class="cal-paint-float__x" type="button" data-action="ausencia-paint-cancel" aria-label="Fechar">✕</button>
+      </div>
+      <div class="cal-paint-float__body">
+        <label class="cal-paint-float__f">Tipo
+          <select data-ausencia-paint="type">${ABSENCE_TYPES.map((t) => `<option value="${escapeAttr(t)}"${normalizeText(t) === normalizeText(paint.type) ? " selected" : ""}>${escapeHtml(t)}</option>`).join("")}</select>
+        </label>
+        <span class="cal-paint-float__count"><strong>${nDias}</strong> dia(s) marcado(s)${dirty ? " · <em>por guardar</em>" : ""}</span>
+      </div>
+      <div class="cal-paint-float__actions">
+        <button class="cal-paint-float__save" type="button" data-action="ausencia-paint-save"${dirty ? "" : " disabled"}>Guardar férias</button>
+        <button class="cal-paint-float__cancel" type="button" data-action="ausencia-paint-cancel">${dirty ? "Cancelar" : "Fechar"}</button>
+      </div>
+    </div>` : "";
 
   return `
     <div class="cal-toolbar">
@@ -6176,7 +6190,8 @@ function renderAusenciaCalendar(monthISO, list) {
     </div>
     ${paintBar}
     <div class="cal-grid cal-grid--head">${weekdays.map((w) => `<div class="cal-head">${w}</div>`).join("")}</div>
-    <div class="cal-grid">${cells.join("")}</div>
+    <div class="cal-grid${painting ? " cal-grid--painting" : ""}">${cells.join("")}</div>
+    ${paintFloat}
   `;
 }
 

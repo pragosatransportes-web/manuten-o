@@ -1340,9 +1340,34 @@ body.modal-open { overflow: hidden; }
 .cal-paintbar__f select { min-height: 30px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px 8px; background: #fff; }
 .cal-paintbar__hint { color: var(--muted); font-size: 12px; }
 .cal-cell--paintable { cursor: pointer; }
-.cal-cell--paintable:hover { box-shadow: inset 0 0 0 2px #93c5fd; }
-.cal-cell--painted { background: #dbeafe; }
-.cal-cell--painted .cal-day { font-weight: 700; color: #1e40af; }
+.cal-cell--paintable:hover { box-shadow: inset 0 0 0 2px #fca5a5; }
+.cal-cell--painted { background: #fee2e2; box-shadow: inset 0 0 0 2px #dc2626; }
+.cal-cell--painted .cal-day { font-weight: 700; color: #b91c1c; }
+.cal-grid--painting { outline: 2px dashed #fca5a5; outline-offset: 3px; border-radius: 8px; }
+
+/* Caixa volante (flutuante) de marcação de férias — a vermelho, com destaque */
+.cal-paint-float {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  z-index: 60; min-width: 300px; max-width: 92vw;
+  background: #fef2f2; border: 2px solid #dc2626; border-radius: 12px;
+  box-shadow: 0 14px 38px rgba(220, 38, 38, 0.30); padding: 12px 14px;
+  color: #7f1d1d; font-size: 13px; animation: calPaintPop 0.14s ease-out;
+}
+@keyframes calPaintPop { from { transform: translate(-50%, 10px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+.cal-paint-float__head { display: flex; align-items: center; gap: 8px; font-size: 13.5px; margin-bottom: 9px; }
+.cal-paint-float__head strong { color: #991b1b; }
+.cal-paint-float__dot { width: 10px; height: 10px; border-radius: 50%; background: #dc2626; box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.18); flex: none; }
+.cal-paint-float__x { margin-left: auto; border: none; background: transparent; color: #991b1b; font-size: 15px; cursor: pointer; line-height: 1; padding: 2px 4px; }
+.cal-paint-float__body { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 11px; }
+.cal-paint-float__f { display: inline-flex; align-items: center; gap: 6px; color: #7f1d1d; }
+.cal-paint-float__f select { border: 1px solid #fca5a5; border-radius: 6px; padding: 4px 8px; background: #fff; color: #7f1d1d; }
+.cal-paint-float__count em { font-style: normal; color: #dc2626; font-weight: 700; }
+.cal-paint-float__actions { display: flex; gap: 8px; justify-content: flex-end; }
+.cal-paint-float__save { background: #dc2626; color: #fff; border: none; border-radius: 8px; padding: 8px 16px; font-weight: 600; cursor: pointer; font-size: 13px; }
+.cal-paint-float__save:hover { background: #b91c1c; }
+.cal-paint-float__save:disabled { background: #fca5a5; cursor: default; }
+.cal-paint-float__cancel { background: #fff; border: 1px solid #fca5a5; color: #991b1b; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 13px; }
+@media (max-width: 560px) { .cal-paint-float { left: 12px; right: 12px; transform: none; min-width: 0; } @keyframes calPaintPop { from { opacity: 0; } to { opacity: 1; } } }
 
 /* Janela dinâmica de detalhe (mini-calendário + listas). */
 .aus-detail__head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }

@@ -466,6 +466,22 @@ document.addEventListener("click", async (event) => {
     saveState();
     render();
   }
+  if (action === "ausencia-mode") {
+    state.ausenciaViewMode = button.dataset.mode === "month" ? "month" : "year";
+    saveState();
+    render();
+  }
+  if (action === "ausencia-year-prev" || action === "ausencia-year-next") {
+    const y = state.ausenciaYear || new Date().getFullYear();
+    state.ausenciaYear = y + (action === "ausencia-year-next" ? 1 : -1);
+    saveState();
+    render();
+  }
+  if (action === "ausencia-resp") {
+    state.filters.ausenciaResp = button.dataset.resp || "";
+    saveState();
+    render();
+  }
   if (action === "delete-ausencia") {
     await deleteAusencia(button.dataset.id);
   }
@@ -768,6 +784,8 @@ function makeInitialState() {
     ganttMode: "week",
     ganttAnchor: "",
     ausenciaMonth: currentMonthISO(),
+    ausenciaViewMode: "year",
+    ausenciaYear: new Date().getFullYear(),
     breakdowns,
     snapshots: seed.snapshots || [],
     audit: buildAudit(breakdowns),
@@ -789,6 +807,7 @@ function makeInitialState() {
       vistoriaResult: "",
       ausenciaSort: "date",
       ausenciaSearch: "",
+      ausenciaResp: "",
       entidadeSearch: "",
       entidadeCategoria: "",
       occurrenceStage: ""
@@ -5670,9 +5689,9 @@ function fleetDueList(f) {
 }
 
 function renderAusencias() {
+  const mode = state.ausenciaViewMode === "month" ? "month" : "year";
   const monthISO = state.ausenciaMonth || currentMonthISO();
   const list = [...state.ausencias].sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)));
-  const drivers = distinctFleetDrivers();
   const monthAbs = list.filter((a) => absenceOverlapsMonth(a, monthISO));
 
   return `
@@ -5680,19 +5699,159 @@ function renderAusencias() {
       <div class="panel-header">
         <div>
           <p class="eyebrow">Ausências</p>
-          <h2>Calendário de ausências</h2>
+          <h2>${mode === "year" ? "Mapa anual de ausências" : "Calendário de ausências"}</h2>
           <p>${list.length} ausência(s) registada(s)</p>
         </div>
         <div class="panel-header__actions">
+          <div class="fleet-viewtoggle" role="group" aria-label="Vista">
+            <button type="button" class="${mode === "year" ? "active" : ""}" data-action="ausencia-mode" data-mode="year">Anual</button>
+            <button type="button" class="${mode === "month" ? "active" : ""}" data-action="ausencia-mode" data-mode="month">Mensal</button>
+          </div>
           <button class="primary-button" type="button" data-action="new-ausencia-modal"><span data-icon="plus"></span><span>Nova ausência</span></button>
         </div>
       </div>
 
-      ${renderAusenciaCalendar(monthISO, list)}
-      ${renderAusenciaPlanning(monthAbs, monthISO)}
+      ${renderAusenciaRespFilter()}
+      ${mode === "year"
+        ? renderAusenciaYear(list)
+        : `${renderAusenciaCalendar(monthISO, list)}${renderAusenciaPlanning(monthAbs, monthISO)}`}
       ${renderAusenciaList(list)}
     </section>
   `;
+}
+
+// Barra de filtro por Responsável de Logística (chips).
+function renderAusenciaRespFilter() {
+  const resps = respLogEntidades().map((e) => e.empresa || e.contactoNome).filter(Boolean);
+  const cur = state.filters.ausenciaResp || "";
+  const chip = (val, label) => `<button type="button" class="chip-filter${cur === val ? " active" : ""}" data-action="ausencia-resp" data-resp="${escapeAttr(val)}">${escapeHtml(label)}</button>`;
+  if (!resps.length) return "";
+  return `
+    <div class="ausencia-respbar">
+      <span class="ausencia-respbar__lbl">Responsável de logística:</span>
+      <div class="chip-filters">${chip("", "Todos")}${resps.map((r) => chip(r, r)).join("")}</div>
+    </div>`;
+}
+
+const AUS_MONTHS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+// Nível de cobertura (nº de pessoas em simultâneo): 1 azul, 2 laranja, 3+ vermelho.
+function ausCoverageClass(n) {
+  return n >= 3 ? "lvl3" : n === 2 ? "lvl2" : n >= 1 ? "lvl1" : "";
+}
+
+function driverInitials(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+
+function renderAusenciaYear(allAbs) {
+  const year = state.ausenciaYear || new Date().getFullYear();
+  const yStr = String(year);
+  const respFilter = state.filters.ausenciaResp || "";
+  // Ausências que tocam neste ano (e, se filtrado, do responsável escolhido).
+  const abs = allAbs.filter((a) =>
+    a.startAt && a.endAt && a.startAt.slice(0, 4) <= yStr && a.endAt.slice(0, 4) >= yStr &&
+    (!respFilter || driverLogisticsResp(a.driver) === respFilter)
+  );
+
+  // Contagem por dia (nº distinto de motoristas ausentes) e dias por motorista.
+  const dayDrivers = {};                 // iso -> Set(driver)
+  const driverDayMonth = {};             // driver -> { [month]: Set(iso) }
+  abs.forEach((a) => {
+    let d = new Date(`${a.startAt}T00:00:00`);
+    const end = new Date(`${a.endAt}T00:00:00`);
+    let guard = 0;
+    while (d <= end && guard++ < 800) {
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      if (iso.slice(0, 4) === yStr) {
+        (dayDrivers[iso] = dayDrivers[iso] || new Set()).add(a.driver);
+        const mo = d.getMonth();
+        const dm = (driverDayMonth[a.driver] = driverDayMonth[a.driver] || {});
+        (dm[mo] = dm[mo] || new Set()).add(iso);
+      }
+      d.setDate(d.getDate() + 1);
+    }
+  });
+
+  const drivers = Object.keys(driverDayMonth).sort((x, y) => x.localeCompare(y, "pt"));
+
+  // Máximo de pessoas em simultâneo por mês (para colorir rodapé) e total de dias/mês.
+  const monthMaxLevel = new Array(12).fill(0);
+  const monthDriverCount = new Array(12).fill(0);
+  for (let m = 0; m < 12; m++) {
+    const set = new Set();
+    drivers.forEach((dr) => { if (driverDayMonth[dr][m]) set.add(dr); });
+    monthDriverCount[m] = set.size;
+  }
+  Object.keys(dayDrivers).forEach((iso) => {
+    const m = Number(iso.slice(5, 7)) - 1;
+    monthMaxLevel[m] = Math.max(monthMaxLevel[m], dayDrivers[iso].size);
+  });
+
+  // Alertas de cobertura: meses com 2+ pessoas em simultâneo.
+  const alerts = [];
+  for (let m = 0; m < 12; m++) {
+    if (monthMaxLevel[m] >= 2) {
+      const who = drivers.filter((dr) => driverDayMonth[dr][m]);
+      const label = new Intl.DateTimeFormat("pt-PT", { month: "long" }).format(new Date(year, m, 1));
+      alerts.push({ level: monthMaxLevel[m], text: `<strong>${escapeHtml(label)}</strong> — ${monthMaxLevel[m]} em simultâneo (${who.map(escapeHtml).join(", ")})` });
+    }
+  }
+  alerts.sort((a, b) => b.level - a.level);
+
+  const headCells = AUS_MONTHS.map((m, i) => `<th class="${i + 1 === new Date().getMonth() + 1 && year === new Date().getFullYear() ? "aus-th--now" : ""}">${m}</th>`).join("");
+
+  const rows = drivers.length ? drivers.map((dr) => {
+    let total = 0;
+    const cells = [];
+    for (let m = 0; m < 12; m++) {
+      const days = driverDayMonth[dr][m];
+      if (!days || !days.size) { cells.push(`<td class="aus-cell aus-cell--empty">—</td>`); continue; }
+      const count = days.size;
+      total += count;
+      let lvl = 0;
+      days.forEach((iso) => { lvl = Math.max(lvl, dayDrivers[iso].size); });
+      cells.push(`<td class="aus-cell aus-cell--${ausCoverageClass(lvl)}" title="${escapeAttr(`${dr} · ${AUS_MONTHS[m]}: ${count} dia(s) · ${lvl} em simultâneo`)}">${count}</td>`);
+    }
+    const resp = driverLogisticsResp(dr);
+    return `
+      <tr>
+        <th class="aus-name"><span class="aus-ava">${escapeHtml(driverInitials(dr))}</span><span><strong>${escapeHtml(dr)}</strong>${resp ? `<small>${escapeHtml(resp)}</small>` : ""}</span></th>
+        ${cells.join("")}
+        <td class="aus-total">${total}</td>
+      </tr>`;
+  }).join("") : `<tr><td colspan="14" class="empty-state">Sem ausências ${escapeHtml(respFilter ? "deste responsável " : "")}em ${year}.</td></tr>`;
+
+  const footCells = [];
+  for (let m = 0; m < 12; m++) {
+    footCells.push(`<td class="aus-foot aus-foot--${ausCoverageClass(monthMaxLevel[m])}">${monthDriverCount[m] || "—"}</td>`);
+  }
+
+  return `
+    <div class="cal-toolbar">
+      <button class="ghost-button" type="button" data-action="ausencia-year-prev" aria-label="Ano anterior">‹</button>
+      <strong class="cal-month">${year}</strong>
+      <button class="ghost-button" type="button" data-action="ausencia-year-next" aria-label="Ano seguinte">›</button>
+    </div>
+    ${alerts.length ? `
+      <div class="aus-alertbox">
+        <strong>⚠️ Alertas de cobertura</strong>
+        ${alerts.map((a) => `<p class="aus-alert aus-alert--${ausCoverageClass(a.level)}">${a.text}</p>`).join("")}
+      </div>` : ""}
+    <div class="aus-legend">
+      <span><i class="aus-dot aus-dot--lvl1"></i> Férias / 1 pessoa</span>
+      <span><i class="aus-dot aus-dot--lvl2"></i> 2 pessoas em simultâneo</span>
+      <span><i class="aus-dot aus-dot--lvl3"></i> 3+ pessoas em simultâneo</span>
+    </div>
+    <div class="table-wrap">
+      <table class="aus-matrix">
+        <thead><tr><th class="aus-name">Motorista</th>${headCells}<th class="aus-total">Total</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><th class="aus-name">Ausências/mês</th>${footCells.join("")}<td class="aus-total">${drivers.length}</td></tr></tfoot>
+      </table>
+    </div>`;
 }
 
 function renderAusenciaCalendar(monthISO, list) {
@@ -6367,7 +6526,7 @@ function resetBrowseFilters() {
     fleetSearch: "", fleetScope: "",
     auditSearch: "", auditType: "", auditPeriod: "",
     entidadeSearch: "", entidadeCategoria: "",
-    ausenciaSearch: "", vistoriaType: "", vistoriaResult: ""
+    ausenciaSearch: "", ausenciaResp: "", vistoriaType: "", vistoriaResult: ""
   });
 }
 

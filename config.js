@@ -5,7 +5,7 @@ window.AVARIAS_REMOTE_CONFIG = {
   // Modo Administrador (gate local): guarda-se apenas o hash SHA-256 da
   // palavra-passe, nunca o texto. Para mudar a palavra-passe, gerar o novo
   // hash (ex.: echo -n NOVA | sha256sum) e substituir o valor abaixo.
-  adminPasswordHash: "dfba6bab5e13b2b0e7eb76863f74d7a406449d6bb408c758827791be6489bf35",
+  adminPasswordHash: "0fbdad615bfcab4667da8087c3406611fe8fdf05432abf97f6c69544d04f92d2",
   trello: {
     // Integração Trello: a "key" identifica a aplicação (pública por definição).
     // O token de autorização NUNCA deve ser colocado aqui (ficaria público no site):

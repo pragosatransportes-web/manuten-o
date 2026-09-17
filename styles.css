@@ -1349,6 +1349,17 @@ body.modal-open { overflow: hidden; }
 .aus-detail__sec h4 { margin: 0 0 6px; font-size: 13px; }
 .aus-detail__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .aus-detail__list--day li { padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-soft); }
+/* Campos editáveis das ausências (tabela + janelas). */
+.aus-inp { min-height: 32px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #fff; color: var(--ink); padding: 5px 8px; font-size: 13px; max-width: 100%; }
+.aus-inp:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15,118,110,0.12); }
+table .aus-inp { width: 100%; box-sizing: border-box; }
+.aus-edit-row { padding: 8px 0; }
+.aus-edit-grid { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.aus-edit-arrow { color: var(--muted); }
+.aus-edit-days { font-weight: 700; font-size: 12px; color: var(--muted); }
+.aus-edit-row .aus-inp[type="text"] { display: block; width: 100%; margin-top: 6px; box-sizing: border-box; }
+.aus-day-item { display: flex; flex-direction: column; gap: 2px; }
+.aus-day-item__top { font-size: 13px; }
 .cal-toolbar .cal-month {
   text-transform: capitalize;
   min-width: 160px;

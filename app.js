@@ -632,6 +632,9 @@ document.addEventListener("change", async (event) => {
   if (target.dataset.fleetLogisticsresp) {
     await updateFleetLogisticsResp(target.dataset.equipment, target.value);
   }
+  if (target.dataset.ausenciaId && target.dataset.ausenciaField) {
+    await updateAusenciaField(target.dataset.ausenciaId, target.dataset.ausenciaField, target.value);
+  }
   if (target.dataset.fleetStatus) {
     await updateFleetStatus(target.dataset.equipment, target.value);
   }
@@ -5192,6 +5195,7 @@ function closeModal() {
   const root = document.querySelector("#modal-root");
   if (root) root.innerHTML = "";
   document.body.classList.remove("modal-open");
+  state._ausModal = null;
 }
 
 function isModalOpen() {
@@ -5695,6 +5699,77 @@ function fleetDueList(f) {
   ].filter((x) => x.value && !isFleetNA(x.value));
 }
 
+// ── Campos editáveis de uma ausência (tabela + janelas dinâmicas) ──
+function ausenciaDriverInput(a) {
+  return `<input class="aus-inp" list="aus-drivers" data-ausencia-id="${escapeAttr(a.id)}" data-ausencia-field="driver" value="${escapeAttr(a.driver || "")}" placeholder="Motorista">`;
+}
+function ausenciaTypeSelect(a) {
+  return `<select class="aus-inp" data-ausencia-id="${escapeAttr(a.id)}" data-ausencia-field="type">${ABSENCE_TYPES.map((t) => `<option value="${escapeAttr(t)}"${normalizeText(t) === normalizeText(a.type) ? " selected" : ""}>${escapeHtml(t)}</option>`).join("")}</select>`;
+}
+function ausenciaDateInput(a, field) {
+  return `<input class="aus-inp" type="date" data-ausencia-id="${escapeAttr(a.id)}" data-ausencia-field="${field}" value="${escapeAttr(a[field] || "")}">`;
+}
+function ausenciaNotesInput(a) {
+  return `<input class="aus-inp" type="text" data-ausencia-id="${escapeAttr(a.id)}" data-ausencia-field="notes" value="${escapeAttr(a.notes || "")}" placeholder="Notas…">`;
+}
+
+// Viaturas do motorista (auto, só leitura) — para a coluna Viatura da tabela.
+function ausenciaDriverVehiclesText(driver) {
+  const vs = driverVehiclesWithConjunto(driver);
+  if (!vs.length) return "—";
+  return vs.map(({ f, conjunto }) => `${conjunto ? "🔗 " : ""}${f.plate || "—"}`).join(" · ");
+}
+
+// Linha editável de uma ausência para as janelas dinâmicas (modal).
+function ausenciaEditRow(a, showDriver) {
+  return `<li class="aus-edit-row">
+    <div class="aus-edit-grid">
+      ${showDriver ? ausenciaDriverInput(a) : ""}
+      ${ausenciaTypeSelect(a)}
+      ${ausenciaDateInput(a, "startAt")}
+      <span class="aus-edit-arrow">→</span>
+      ${ausenciaDateInput(a, "endAt")}
+      <span class="aus-edit-days">${absenceDays(a)} d</span>
+      <button class="icon-button" type="button" data-action="delete-ausencia" data-id="${escapeAttr(a.id)}" title="Eliminar ausência"><span data-icon="trash"></span></button>
+    </div>
+    ${ausenciaNotesInput(a)}
+  </li>`;
+}
+
+async function updateAusenciaField(id, field, rawValue) {
+  const a = state.ausencias.find((x) => String(x.id) === String(id));
+  if (!a) return;
+  const prev = a[field] || "";
+  const next = String(rawValue ?? "").trim();
+  if (field === "driver" && !next) { showToast("O motorista não pode ficar vazio."); render(); refreshAusenciaModal(); return; }
+  if (field === "startAt" && a.endAt && next && next > a.endAt) { showToast("O início não pode ser depois do fim."); render(); refreshAusenciaModal(); return; }
+  if (field === "endAt" && a.startAt && next && next < a.startAt) { showToast("O fim não pode ser antes do início."); render(); refreshAusenciaModal(); return; }
+  if (next === prev) return;
+  a[field] = next;
+  const auditEvent = {
+    id: `AUS-${id}-edit-${Date.now()}`, breakdownId: "", equipment: "", plate: "",
+    at: new Date().toISOString(), action: "Ausência editada", status: a.type,
+    note: `${a.driver} · ${field}: ${prev || "—"} → ${next || "—"}`
+  };
+  state.audit.unshift(auditEvent);
+  saveState();
+  showToast("Ausência atualizada.");
+  render();
+  refreshAusenciaModal();
+  await persistRemoteSafely(async () => {
+    await persistAusenciaRemote(a);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
+// Re-render da janela dinâmica aberta após uma edição/eliminação.
+function refreshAusenciaModal() {
+  const m = state._ausModal;
+  if (!m || !isModalOpen()) return;
+  if (m.kind === "cell") openAusenciaCellDetail(m.driver, m.month);
+  else if (m.kind === "day") openAusenciaDayDetail(m.date);
+}
+
 function renderAusencias() {
   const mode = state.ausenciaViewMode === "month" ? "month" : "year";
   const monthISO = state.ausenciaMonth || currentMonthISO();
@@ -5718,6 +5793,7 @@ function renderAusencias() {
         </div>
       </div>
 
+      <datalist id="aus-drivers">${distinctFleetDrivers().map((d) => `<option value="${escapeAttr(d)}"></option>`).join("")}</datalist>
       ${renderAusenciaRespFilter()}
       ${mode === "year"
         ? renderAusenciaYear(list)
@@ -5903,6 +5979,7 @@ function ausenciaMiniCalHtml(year, month, driverDaysSet) {
 // Janela dinâmica: detalhe do mês de um motorista (a partir de uma célula do mapa anual).
 function openAusenciaCellDetail(driver, month) {
   if (!driver || !Number.isFinite(month)) return;
+  state._ausModal = { kind: "cell", driver, month };
   const year = state.ausenciaYear || new Date().getFullYear();
   const monthName = new Intl.DateTimeFormat("pt-PT", { month: "long" }).format(new Date(year, month, 1));
   const abs = absencesForDriverMonth(driver, year, month).sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)));
@@ -5919,7 +5996,7 @@ function openAusenciaCellDetail(driver, month) {
 
   const resp = driverLogisticsResp(driver);
   const absList = abs.length
-    ? abs.map((a) => `<li><span class="cal-abs cal-abs--${absenceClass(a.type)}">${escapeHtml(a.type)}</span> ${formatDate(a.startAt)} → ${formatDate(a.endAt)} · <strong>${absenceDays(a)} d</strong>${a.notes ? ` <span class="muted">· ${escapeHtml(a.notes)}</span>` : ""}</li>`).join("")
+    ? abs.map((a) => ausenciaEditRow(a, false)).join("")
     : `<li class="muted">Sem ausências neste mês.</li>`;
 
   const vehicles = driverVehiclesWithConjunto(driver);
@@ -5948,17 +6025,17 @@ function openAusenciaCellDetail(driver, month) {
 // Janela dinâmica: detalhe de um dia do calendário mensal (quem está ausente).
 function openAusenciaDayDetail(dateISO) {
   if (!dateISO) return;
+  state._ausModal = { kind: "day", date: dateISO };
   const dayAbs = (state.ausencias || []).filter((a) => a.startAt && a.endAt && dateISO >= a.startAt && dateISO <= a.endAt)
     .sort((a, b) => (a.driver || "").localeCompare(b.driver || "", "pt"));
   const dLabel = formatDate(dateISO);
   const items = dayAbs.length
     ? dayAbs.map((a) => {
         const resp = driverLogisticsResp(a.driver);
-        const vehicles = driverVehiclesWithConjunto(a.driver);
-        const veh = vehicles.length ? vehicles.map(({ f, conjunto }) => `${conjunto ? "🔗 " : ""}${escapeHtml(f.plate || "—")}`).join(" · ") : "sem viatura";
-        return `<li>
-          <div><span class="cal-abs cal-abs--${absenceClass(a.type)}">${escapeHtml(a.type)}</span> <strong>${escapeHtml(a.driver)}</strong>${resp ? ` <span class="muted">· ${escapeHtml(resp)}</span>` : ""}</div>
-          <div class="muted">${formatDate(a.startAt)} → ${formatDate(a.endAt)} · 🚚 ${veh} <span class="plan-oficina">🔧 disponível p/ oficina</span></div>
+        const veh = ausenciaDriverVehiclesText(a.driver);
+        return `<li class="aus-day-item">
+          <div class="aus-day-item__top"><strong>${escapeHtml(a.driver)}</strong>${resp ? ` <span class="muted">· ${escapeHtml(resp)}</span>` : ""} <span class="muted">· 🚚 ${escapeHtml(veh)}</span> <span class="plan-oficina">🔧 disponível p/ oficina</span></div>
+          ${ausenciaEditRow(a, false)}
         </li>`;
       }).join("")
     : `<li class="muted">Ninguém ausente neste dia.</li>`;
@@ -6104,13 +6181,13 @@ function ausenciaSearchNorm(s) {
 
 function ausenciaListRow(a) {
   return `<tr>
-    <td><strong>${escapeHtml(a.driver)}</strong></td>
-    <td>${escapeHtml(ausenciaVehicleText(a) || "-")}</td>
-    <td><span class="cal-abs cal-abs--${absenceClass(a.type)}">${escapeHtml(a.type)}</span></td>
-    <td>${formatDate(a.startAt)}</td>
-    <td>${formatDate(a.endAt)}</td>
+    <td>${ausenciaDriverInput(a)}</td>
+    <td class="muted">${escapeHtml(ausenciaDriverVehiclesText(a.driver))}</td>
+    <td>${ausenciaTypeSelect(a)}</td>
+    <td>${ausenciaDateInput(a, "startAt")}</td>
+    <td>${ausenciaDateInput(a, "endAt")}</td>
     <td>${absenceDays(a)}</td>
-    <td class="compact-cell">${escapeHtml(a.notes || "-")}</td>
+    <td class="compact-cell">${ausenciaNotesInput(a)}</td>
     <td><button class="icon-button" type="button" data-action="delete-ausencia" data-id="${escapeAttr(a.id)}" title="Eliminar ausência"><span data-icon="trash"></span></button></td>
   </tr>`;
 }
@@ -6251,6 +6328,7 @@ async function deleteAusencia(id) {
   saveState();
   showToast("Ausência eliminada.");
   render();
+  refreshAusenciaModal();
   await persistRemoteSafely(async () => {
     await deleteAusenciaRemote(id);
     await persistAuditRemote(auditEvent);

@@ -291,6 +291,18 @@ input[readonly] { color: var(--muted); background: #f9fafb; }
 .toolbar input  { flex: 1 1 200px; }
 .toolbar select { flex: 0 1 180px; }
 
+/* Campo de pesquisa com botão "Limpar" explícito. */
+.search-field { display: flex; align-items: stretch; gap: 6px; flex: 1 1 240px; min-width: 200px; }
+.search-field > input[type="search"] { flex: 1 1 auto; min-width: 0; width: 100%; }
+.search-clear {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  padding: 0 12px; min-height: 36px; font-size: 13px; font-weight: 600;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: var(--surface-soft); color: var(--muted); cursor: pointer;
+  transition: border-color 120ms, background 120ms, color 120ms;
+}
+.search-clear:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-pale); }
+
 /* ── Modo Administrador ─────────────────────────── */
 .admin-toggle.is-admin {
   border-color: var(--accent);

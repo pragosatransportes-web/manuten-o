@@ -348,6 +348,10 @@ document.addEventListener("click", async (event) => {
     saveState();
     render();
   }
+  if (action === "clear-filter") {
+    setFilter(button.dataset.filter, "");
+    return;
+  }
   if (action === "select-breakdown") {
     state.selectedId = button.dataset.id;
     saveState();
@@ -3039,7 +3043,7 @@ function renderFilters(context) {
       </button>` : "";
   return `
     <div class="toolbar">
-      <input type="search" data-filter="search" value="${escapeAttr(state.filters.search)}" placeholder="${searchPlaceholder}">
+      ${searchFieldHtml("search", searchPlaceholder)}
       ${renderMultiFilter("status", "Estados", options.statuses)}
       ${renderMultiFilter("situation", "Situações", options.situations)}
       ${renderMultiFilter("type", "Tipos", options.types)}
@@ -4055,7 +4059,7 @@ function renderFleet() {
       </div>
       ${inactiveView ? `<p class="fleet-scope-note">Viaturas marcadas como <strong>Inativa</strong> — mantidas para consulta de histórico, fora do painel de ativas. Muda o Estado para <strong>Ativa</strong> (modo admin) para as trazer de volta.</p>` : ""}
       <div class="toolbar fleet-toolbar">
-        <input type="search" data-filter="fleetSearch" value="${escapeAttr(state.filters.fleetSearch)}" placeholder="Pesquisar equipamento, matrícula ou marca">
+        ${searchFieldHtml("fleetSearch", "Pesquisar equipamento, matrícula ou marca")}
         <div class="fleet-viewtoggle" role="group" aria-label="Modo de visualização">
           <button type="button" class="${fleetView === "cards" ? "active" : ""}" data-action="fleet-view" data-mode="cards">Cartões</button>
           <button type="button" class="${fleetView === "table" ? "active" : ""}" data-action="fleet-view" data-mode="table">Tabela</button>
@@ -4769,7 +4773,7 @@ function renderAudit() {
           </div>
         </div>
         <div class="toolbar">
-          <input type="search" data-filter="auditSearch" value="${escapeAttr(state.filters.auditSearch)}" placeholder="Pesquisar evento, equipamento ou nota">
+          ${searchFieldHtml("auditSearch", "Pesquisar evento, equipamento ou nota")}
         </div>
         <div class="audit-filters">
           <div class="chip-filters">
@@ -5221,7 +5225,7 @@ function renderEntidades() {
         </div>
       </div>
       <div class="entidade-toolbar">
-        <input type="search" class="entidade-search" data-filter="entidadeSearch" value="${escapeAttr(state.filters.entidadeSearch || "")}" placeholder="Pesquisar (empresa, contacto, telefone, email…)">
+        ${searchFieldHtml("entidadeSearch", "Pesquisar (empresa, contacto, telefone, email…)", "entidade-search")}
         <div class="chip-filters">${catChips}</div>
       </div>
       <div class="entidade-grid">${cards}</div>
@@ -5804,7 +5808,7 @@ function renderAusenciaList(list) {
       <div class="panel-sub__head">
         <h3>Todas as ausências${term ? ` · ${sorted.length} resultado(s)` : ""}</h3>
         <div class="panel-sub__tools">
-          <input type="search" class="ausencia-search" data-filter="ausenciaSearch" value="${escapeAttr(state.filters.ausenciaSearch || "")}" placeholder="Pesquisar (matrícula, motorista, viatura…)">
+          ${searchFieldHtml("ausenciaSearch", "Pesquisar (matrícula, motorista, viatura…)", "ausencia-search")}
           <label class="sort-select">Ordenar por
             <select data-filter="ausenciaSort">
               <option value="date" ${sortKey === "date" ? "selected" : ""}>Data</option>
@@ -6317,6 +6321,17 @@ function setFilter(name, value) {
   state.filters[name] = value;
   saveState();
   render(`[data-filter="${name}"]`);
+}
+
+// Campo de pesquisa com botão "Limpar" explícito (aparece só quando há texto).
+function searchFieldHtml(key, placeholder, inputClass = "") {
+  const val = state.filters[key] || "";
+  const cls = inputClass ? ` class="${escapeAttr(inputClass)}"` : "";
+  return `
+    <div class="search-field">
+      <input type="search"${cls} data-filter="${escapeAttr(key)}" value="${escapeAttr(val)}" placeholder="${escapeAttr(placeholder)}">
+      ${val ? `<button type="button" class="search-clear" data-action="clear-filter" data-filter="${escapeAttr(key)}" title="Limpar pesquisa">✕ Limpar</button>` : ""}
+    </div>`;
 }
 
 function toggleMultiFilter(name, value) {

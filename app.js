@@ -464,6 +464,8 @@ document.addEventListener("click", async (event) => {
   if (action === "ausencia-next-month") shiftAusenciaMonth(1);
   if (action === "ausencia-today") {
     state.ausenciaMonth = currentMonthISO();
+    const p = ausPaint();
+    if (p.driver) p.days = paintInitDays(p.driver, p.type, state.ausenciaMonth);
     saveState();
     render();
   }
@@ -488,6 +490,15 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "ausencia-day") {
     openAusenciaDayDetail(button.dataset.date || "");
+  }
+  if (action === "ausencia-paint-day") {
+    togglePaintDay(button.dataset.date || "");
+  }
+  if (action === "ausencia-paint-save") {
+    await savePaint();
+  }
+  if (action === "ausencia-paint-cancel") {
+    cancelPaint();
   }
   if (action === "delete-ausencia") {
     await deleteAusencia(button.dataset.id);
@@ -634,6 +645,12 @@ document.addEventListener("change", async (event) => {
   }
   if (target.dataset.ausenciaId && target.dataset.ausenciaField) {
     await updateAusenciaField(target.dataset.ausenciaId, target.dataset.ausenciaField, target.value);
+  }
+  if (target.dataset.ausenciaPaint === "driver") {
+    setPaintDriver(target.value);
+  }
+  if (target.dataset.ausenciaPaint === "type") {
+    setPaintType(target.value);
   }
   if (target.dataset.fleetStatus) {
     await updateFleetStatus(target.dataset.equipment, target.value);
@@ -796,6 +813,7 @@ function makeInitialState() {
     ausenciaMonth: currentMonthISO(),
     ausenciaViewMode: "year",
     ausenciaYear: new Date().getFullYear(),
+    ausenciaPaint: { driver: "", type: ABSENCE_TYPES[0], days: {} },
     breakdowns,
     snapshots: seed.snapshots || [],
     audit: buildAudit(breakdowns),
@@ -6107,6 +6125,8 @@ function renderAusenciaCalendar(monthISO, list) {
   const today = todayISO();
   const weekdays = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 
+  const paint = ausPaint();
+  const painting = !!paint.driver;
   const cells = [];
   for (let i = 0; i < startWeekday; i++) cells.push(`<div class="cal-cell cal-cell--empty"></div>`);
   for (let d = 1; d <= daysInMonth; d++) {
@@ -6115,9 +6135,37 @@ function renderAusenciaCalendar(monthISO, list) {
     const chips = dayAbs
       .map((a) => `<span class="cal-abs cal-abs--${absenceClass(a.type)}" title="${escapeAttr(`${a.driver} · ${a.type}`)}">${escapeHtml(a.driver)}</span>`)
       .join("");
-    const clickable = dayAbs.length ? ` data-action="ausencia-day" data-date="${dateISO}"` : "";
-    cells.push(`<div class="cal-cell${dateISO === today ? " cal-cell--today" : ""}${dayAbs.length ? " cal-cell--has" : ""}"${clickable}><span class="cal-day">${d}</span>${chips}</div>`);
+    let attrs, extraCls;
+    if (painting) {
+      const on = !!paint.days[dateISO];
+      attrs = ` data-action="ausencia-paint-day" data-date="${dateISO}"`;
+      extraCls = ` cal-cell--paintable${on ? " cal-cell--painted" : ""}`;
+    } else {
+      attrs = dayAbs.length ? ` data-action="ausencia-day" data-date="${dateISO}"` : "";
+      extraCls = dayAbs.length ? " cal-cell--has" : "";
+    }
+    cells.push(`<div class="cal-cell${dateISO === today ? " cal-cell--today" : ""}${extraCls}"${attrs}><span class="cal-day">${d}</span>${chips}</div>`);
   }
+
+  const drivers = distinctFleetDrivers();
+  const dirty = paintDirty(monthISO);
+  const paintBar = `
+    <div class="cal-paintbar${painting ? " cal-paintbar--on" : ""}">
+      <label class="cal-paintbar__f">Marcar férias de:
+        <select data-ausencia-paint="driver">
+          <option value="">— escolher motorista —</option>
+          ${drivers.map((dr) => `<option value="${escapeAttr(dr)}"${dr === paint.driver ? " selected" : ""}>${escapeHtml(dr)}</option>`).join("")}
+        </select>
+      </label>
+      ${painting ? `
+      <label class="cal-paintbar__f">Tipo:
+        <select data-ausencia-paint="type">${ABSENCE_TYPES.map((t) => `<option value="${escapeAttr(t)}"${normalizeText(t) === normalizeText(paint.type) ? " selected" : ""}>${escapeHtml(t)}</option>`).join("")}</select>
+      </label>
+      <span class="cal-paintbar__hint">Clica nos dias para marcar/desmarcar · <strong>${Object.keys(paint.days).length}</strong> dia(s)${dirty ? " · alterações por guardar" : ""}</span>
+      ${dirty ? `<button class="primary-button" type="button" data-action="ausencia-paint-save"><span data-icon="check"></span><span>Guardar</span></button>` : ""}
+      <button class="ghost-button" type="button" data-action="ausencia-paint-cancel">${dirty ? "Cancelar" : "Fechar edição"}</button>
+      ` : ""}
+    </div>`;
 
   return `
     <div class="cal-toolbar">
@@ -6126,9 +6174,108 @@ function renderAusenciaCalendar(monthISO, list) {
       <button class="ghost-button" type="button" data-action="ausencia-next-month" aria-label="Mês seguinte">›</button>
       <button class="link-button" type="button" data-action="ausencia-today">Hoje</button>
     </div>
+    ${paintBar}
     <div class="cal-grid cal-grid--head">${weekdays.map((w) => `<div class="cal-head">${w}</div>`).join("")}</div>
     <div class="cal-grid">${cells.join("")}</div>
   `;
+}
+
+// ── Edição rápida de férias no calendário (pintar dias) ──
+function ausPaint() {
+  if (!state.ausenciaPaint) state.ausenciaPaint = { driver: "", type: ABSENCE_TYPES[0], days: {} };
+  return state.ausenciaPaint;
+}
+function addDaysISO(iso, n) {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function newAusenciaId() {
+  return `AUS-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+// Dias (no mês) já ocupados por ausências do motorista+tipo — base da pintura.
+function paintInitDays(driver, type, monthISO) {
+  const days = {};
+  if (!driver) return days;
+  const { first, last } = monthBounds(monthISO);
+  state.ausencias
+    .filter((a) => a.driver === driver && normalizeText(a.type) === normalizeText(type) && a.startAt && a.endAt)
+    .forEach((a) => {
+      let cur = a.startAt < first ? first : a.startAt;
+      const end = a.endAt > last ? last : a.endAt;
+      let guard = 0;
+      while (cur <= end && guard++ < 400) { days[cur] = true; cur = addDaysISO(cur, 1); }
+    });
+  return days;
+}
+function setPaintDriver(driver) {
+  const monthISO = state.ausenciaMonth || currentMonthISO();
+  const type = ausPaint().type || ABSENCE_TYPES[0];
+  state.ausenciaPaint = { driver: driver || "", type, days: driver ? paintInitDays(driver, type, monthISO) : {} };
+  saveState(); render();
+}
+function setPaintType(type) {
+  const p = ausPaint();
+  const monthISO = state.ausenciaMonth || currentMonthISO();
+  const t = type || ABSENCE_TYPES[0];
+  state.ausenciaPaint = { driver: p.driver || "", type: t, days: p.driver ? paintInitDays(p.driver, t, monthISO) : {} };
+  saveState(); render();
+}
+function togglePaintDay(dateISO) {
+  const p = ausPaint();
+  if (!p.driver || !dateISO) return;
+  if (p.days[dateISO]) delete p.days[dateISO]; else p.days[dateISO] = true;
+  saveState(); render();
+}
+function cancelPaint() {
+  state.ausenciaPaint = { driver: "", type: ABSENCE_TYPES[0], days: {} };
+  saveState(); render();
+}
+function paintDirty(monthISO) {
+  const p = ausPaint();
+  if (!p.driver) return false;
+  const orig = paintInitDays(p.driver, p.type, monthISO);
+  return Object.keys(orig).sort().join(",") !== Object.keys(p.days).sort().join(",");
+}
+// Recalcula as ausências do motorista+tipo neste mês a partir dos dias pintados,
+// preservando as partes que ficam fora do mês (recorta/divide quando necessário).
+function reconcilePaint(driver, type, monthISO, paintedArr) {
+  const { first, last } = monthBounds(monthISO);
+  const painted = [...new Set(paintedArr)].filter((iso) => iso >= first && iso <= last).sort();
+  const isSel = (a) => a && a.driver === driver && normalizeText(a.type) === normalizeText(type) && a.startAt && a.endAt;
+  const newAus = [], toDelete = [], toPersist = [];
+  state.ausencias.forEach((a) => {
+    if (!isSel(a)) { newAus.push(a); return; }
+    if (a.endAt < first || a.startAt > last) { newAus.push(a); return; } // fora do mês
+    let touched = false;
+    if (a.startAt < first) { const before = { ...a, endAt: addDaysISO(first, -1) }; newAus.push(before); toPersist.push(before); touched = true; }
+    if (a.endAt > last) { const after = (a.startAt < first) ? { ...a, id: newAusenciaId(), startAt: addDaysISO(last, 1) } : { ...a, startAt: addDaysISO(last, 1) }; newAus.push(after); toPersist.push(after); touched = true; }
+    if (!touched) toDelete.push(String(a.id)); // totalmente dentro do mês → substituída pela pintura
+  });
+  for (let i = 0; i < painted.length; i++) {
+    const s = painted[i]; let e = s;
+    while (i + 1 < painted.length && painted[i + 1] === addDaysISO(e, 1)) { e = painted[i + 1]; i++; }
+    const item = { id: newAusenciaId(), driver, type, startAt: s, endAt: e, notes: "", createdAt: new Date().toISOString(), createdBy: (remoteConfig.operator || "Utilizador") };
+    newAus.push(item); toPersist.push(item);
+  }
+  return { newAus, toDelete, toPersist };
+}
+async function savePaint() {
+  const p = ausPaint();
+  if (!p.driver) { showToast("Escolhe um motorista."); return; }
+  const monthISO = state.ausenciaMonth || currentMonthISO();
+  const { newAus, toDelete, toPersist } = reconcilePaint(p.driver, p.type, monthISO, Object.keys(p.days));
+  state.ausencias = newAus;
+  const monthLabel = new Intl.DateTimeFormat("pt-PT", { month: "long", year: "numeric" }).format(new Date(`${monthISO}-01T00:00:00`));
+  const auditEvent = { id: `AUS-paint-${Date.now()}`, breakdownId: "", equipment: "", plate: "", at: new Date().toISOString(), action: "Férias editadas no calendário", status: p.type, note: `${p.driver} · ${monthLabel} · ${Object.keys(p.days).length} dia(s)` };
+  state.audit.unshift(auditEvent);
+  state.ausenciaPaint = { driver: p.driver, type: p.type, days: paintInitDays(p.driver, p.type, monthISO) };
+  saveState(); showToast("Férias guardadas."); render();
+  await persistRemoteSafely(async () => {
+    for (const id of toDelete) await deleteAusenciaRemote(id);
+    for (const it of toPersist) await persistAusenciaRemote(it);
+    await persistAuditRemote(auditEvent);
+  });
 }
 
 // Responsável de logística de um motorista, deduzido da(s) sua(s) viatura(s).
@@ -6281,6 +6428,9 @@ function shiftAusenciaMonth(delta) {
   const [y, m] = (state.ausenciaMonth || currentMonthISO()).split("-").map(Number);
   const d = new Date(y, m - 1 + delta, 1);
   state.ausenciaMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  // Se estiver em modo pintura, re-sincroniza os dias para o novo mês (mantém o motorista).
+  const p = ausPaint();
+  if (p.driver) p.days = paintInitDays(p.driver, p.type, state.ausenciaMonth);
   saveState();
   render();
 }

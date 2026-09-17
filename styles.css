@@ -1333,6 +1333,17 @@ body.modal-open { overflow: hidden; }
 .cal-cell--has { cursor: pointer; }
 .cal-cell--has:hover { box-shadow: inset 0 0 0 2px var(--accent); }
 
+/* Edição rápida de férias (pintar dias no calendário) */
+.cal-paintbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fafafa; font-size: 13px; }
+.cal-paintbar--on { background: #eef6ff; border-color: #bcd9ff; }
+.cal-paintbar__f { display: inline-flex; align-items: center; gap: 6px; }
+.cal-paintbar__f select { min-height: 30px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px 8px; background: #fff; }
+.cal-paintbar__hint { color: var(--muted); font-size: 12px; }
+.cal-cell--paintable { cursor: pointer; }
+.cal-cell--paintable:hover { box-shadow: inset 0 0 0 2px #93c5fd; }
+.cal-cell--painted { background: #dbeafe; }
+.cal-cell--painted .cal-day { font-weight: 700; color: #1e40af; }
+
 /* Janela dinâmica de detalhe (mini-calendário + listas). */
 .aus-detail__head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .aus-detail__head small { display: block; color: var(--muted); font-size: 12px; }

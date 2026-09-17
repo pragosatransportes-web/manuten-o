@@ -24,7 +24,7 @@ let remoteBreakdownHasPreventive = true;
 const ABSENCE_TYPES = ["Férias", "Baixa médica"];
 
 const ENTIDADE_TIPOS = ["Externa", "Interna"];
-const ENTIDADE_CATEGORIAS = ["Oficina", "Fornecedor", "Motorista", "Cliente", "Seguradora", "Outro"];
+const ENTIDADE_CATEGORIAS = ["Oficina", "Fornecedor", "Motorista", "Resp. Logística", "Cliente", "Seguradora", "Outro"];
 
 // Ocorrências (redesign ARGOS): tipo de intervenção + numeração + prioridade.
 const INTERVENTION_TYPES = ["Corretiva", "Garantia", "Preditiva", "Preventiva", "Sinistro"];
@@ -4430,17 +4430,37 @@ async function updateFleetCompany(equipment, value) {
 
 // ── Conjunto (trator+reboque) e Resp. logística por viatura ─────────────────
 
+// Entidades da categoria "Resp. Logística" — fonte do dropdown da Frota e do agrupamento do email.
+function respLogEntidades() {
+  return entidadesByCategoria("Resp. Logística");
+}
+function respLogEntidadeByName(name) {
+  const n = normalizeText(name || "");
+  if (!n) return null;
+  return (state.entidades || []).find((e) =>
+    normalizeText(e.categoria) === normalizeText("Resp. Logística") && normalizeText(e.empresa) === n
+  ) || null;
+}
+
 function renderFleetLogisticsCell(item) {
+  const resps = respLogEntidades();
+  const cur = item.logisticsResp || "";
+  const opts = ['<option value="">—</option>'];
+  resps.forEach((e) => {
+    const name = e.empresa || e.contactoNome || "";
+    if (!name) return;
+    opts.push(`<option value="${escapeAttr(name)}"${name === cur ? " selected" : ""}>${escapeHtml(name)}</option>`);
+  });
+  // Preserva valor antigo (texto livre) que não corresponda a nenhuma entidade da categoria.
+  if (cur && !resps.some((e) => (e.empresa || e.contactoNome) === cur)) {
+    opts.push(`<option value="${escapeAttr(cur)}" selected>${escapeHtml(cur)} (livre)</option>`);
+  }
   return `
-    <input
-      type="text"
-      list="fleet-resploglist"
-      value="${escapeAttr(item.logisticsResp || "")}"
-      placeholder="—"
+    <select
       data-equipment="${escapeAttr(item.equipment)}"
       data-fleet-logisticsresp="true"
       aria-label="Resp. logística equip. ${escapeAttr(item.equipment)}"
-    >`;
+    >${opts.join("")}</select>`;
 }
 
 function renderFleetPartnerCell(item) {
@@ -6345,6 +6365,57 @@ function getMeetingById(id) {
   return state.meetings.find((m) => String(m.id) === String(id));
 }
 
+// Resolve a viatura de um evento (por equipamento, senão por matrícula) e o respetivo Resp. Logística.
+function eventFleet(e) {
+  if (!e) return null;
+  if (e.equipment) {
+    const byEq = (state.fleet || []).find((f) => String(f.equipment) === String(e.equipment));
+    if (byEq) return byEq;
+  }
+  if (e.plate) {
+    const np = normalizePlate(e.plate);
+    return (state.fleet || []).find((f) => normalizePlate(f.plate) === np) || null;
+  }
+  return null;
+}
+function eventResp(e) {
+  const f = eventFleet(e);
+  return (f && f.logisticsResp) ? f.logisticsResp : "";
+}
+
+const RESP_NENHUM = "— Sem responsável atribuído —";
+// Agrupa os eventos de uma reunião por Responsável de Logística e, dentro de cada um, por viatura.
+function groupMeetingEventsByResp(events) {
+  const respOrder = [];
+  const respMap = new Map(); // resp -> { email, vehicles: Map(key -> {label, events}) }
+  (events || []).forEach((e) => {
+    const resp = eventResp(e) || RESP_NENHUM;
+    if (!respMap.has(resp)) {
+      const ent = resp === RESP_NENHUM ? null : respLogEntidadeByName(resp);
+      respMap.set(resp, { email: ent ? (ent.email || "") : "", vehicles: new Map() });
+      respOrder.push(resp);
+    }
+    const bucket = respMap.get(resp);
+    const key = e.plate ? normalizePlate(e.plate) : (e.equipment ? `eq${e.equipment}` : "geral");
+    const label = e.plate
+      ? `${e.plate}${e.equipment ? ` · Equip. ${e.equipment}` : ""}`
+      : (e.equipment ? `Equip. ${e.equipment}` : "Geral (sem viatura)");
+    if (!bucket.vehicles.has(key)) bucket.vehicles.set(key, { label, events: [] });
+    bucket.vehicles.get(key).events.push(e);
+  });
+  respOrder.sort((a, b) => {
+    if (a === RESP_NENHUM) return 1;
+    if (b === RESP_NENHUM) return -1;
+    return a.localeCompare(b, "pt");
+  });
+  return respOrder.map((resp) => {
+    const bucket = respMap.get(resp);
+    const vehicles = [...bucket.vehicles.values()].sort((a, b) => a.label.localeCompare(b.label, "pt", { numeric: true }));
+    vehicles.forEach((v) => v.events.sort((a, b) => String(a.at).localeCompare(String(b.at))));
+    return { resp, email: bucket.email, vehicles };
+  });
+}
+
 function buildMeetingReportWorkbook(meeting) {
   const ev = meeting.events || [];
   const novas = ev.filter((e) => e.type === "new");
@@ -6373,23 +6444,23 @@ function buildMeetingReportWorkbook(meeting) {
       },
       {
         title: "Novas avarias",
-        columns: ["Hora", "Equip.", "Matrícula", "Descrição"],
-        rows: novas.map((e) => [formatTimeOnly(e.at), String(e.equipment || ""), e.plate || "", e.summary || ""])
+        columns: ["Resp. Logística", "Hora", "Equip.", "Matrícula", "Descrição"],
+        rows: novas.map((e) => [eventResp(e) || "—", formatTimeOnly(e.at), String(e.equipment || ""), e.plate || "", e.summary || ""])
       },
       {
         title: "Atualizações",
-        columns: ["Hora", "Equip.", "Matrícula", "Ação", "Resumo"],
-        rows: updates.map((e) => [formatTimeOnly(e.at), String(e.equipment || ""), e.plate || "", meetingEventLabel(e.type), e.summary || ""])
+        columns: ["Resp. Logística", "Hora", "Equip.", "Matrícula", "Ação", "Resumo"],
+        rows: updates.map((e) => [eventResp(e) || "—", formatTimeOnly(e.at), String(e.equipment || ""), e.plate || "", meetingEventLabel(e.type), e.summary || ""])
       },
       {
         title: "Tarefas",
-        columns: ["Hora", "Estado", "Matrícula", "Equip.", "Tarefa"],
-        rows: tarefas.map((e) => [formatTimeOnly(e.at), e.done ? "Concluída" : "Pendente", e.plate || "", String(e.equipment || ""), e.summary || ""])
+        columns: ["Resp. Logística", "Hora", "Estado", "Matrícula", "Equip.", "Tarefa"],
+        rows: tarefas.map((e) => [eventResp(e) || "—", formatTimeOnly(e.at), e.done ? "Concluída" : "Pendente", e.plate || "", String(e.equipment || ""), e.summary || ""])
       },
       {
         title: "Notas",
-        columns: ["Hora", "Matrícula", "Equip.", "Nota / observação"],
-        rows: notas.map((e) => [formatTimeOnly(e.at), e.plate || "", String(e.equipment || ""), e.summary || ""])
+        columns: ["Resp. Logística", "Hora", "Matrícula", "Equip.", "Nota / observação"],
+        rows: notas.map((e) => [eventResp(e) || "—", formatTimeOnly(e.at), e.plate || "", String(e.equipment || ""), e.summary || ""])
       }
     ]
   };
@@ -6403,33 +6474,27 @@ function exportMeetingReportExcel(id) {
 
 function meetingReportText(meeting) {
   const ev = meeting.events || [];
-  const novas = ev.filter((e) => e.type === "new");
-  const updates = ev.filter((e) => e.type === "update" || e.type === "close" || e.type === "reopen");
-  const tarefas = ev.filter((e) => e.type === "task");
-  const notas = ev.filter((e) => e.type === "note");
+  const groups = groupMeetingEventsByResp(ev);
   const heading = (t) => `${t}\n${"─".repeat(Math.min(60, t.length))}`;
   const lines = [];
   lines.push(heading(`Relatório de Reunião — ${formatDate((meeting.startedAt || "").slice(0, 10))}`));
   if (meeting.endedAt) lines.push(`Duração: ${meeting.durationMin} min`);
   lines.push(`Operador: ${meeting.operator || "-"}`);
+  lines.push(`Total de registos: ${ev.length}`);
   lines.push("");
-  lines.push(heading(`Novas Avarias (${novas.length})`));
-  if (novas.length) novas.forEach((e) => lines.push(`- Equip. ${e.equipment || "-"} · ${e.plate || "-"}: ${e.summary || "-"}`));
-  else lines.push("- (nenhuma)");
-  lines.push("");
-  lines.push(heading(`Atualizações em Avarias Abertas (${updates.length})`));
-  if (updates.length) updates.forEach((e) => lines.push(`- Equip. ${e.equipment || "-"} · ${e.plate || "-"} · ${meetingEventLabel(e.type)}: ${e.summary || "-"}`));
-  else lines.push("- (nenhuma)");
-  lines.push("");
-  const vehPrefix = (e) => (e.plate || e.equipment) ? `[${e.plate || `Equip. ${e.equipment}`}] ` : "";
-  lines.push(heading(`Tarefas (${tarefas.length})`));
-  if (tarefas.length) tarefas.forEach((e) => lines.push(`- [${e.done ? "x" : " "}] ${vehPrefix(e)}${e.summary || "-"}`));
-  else lines.push("- (nenhuma)");
-  lines.push("");
-  lines.push(heading(`Notas / Observações (${notas.length})`));
-  if (notas.length) notas.forEach((e) => lines.push(`- ${vehPrefix(e)}${e.summary || "-"}`));
-  else lines.push("- (nenhuma)");
-  return lines.join("\n");
+  if (!groups.length) { lines.push("(sem registos)"); return lines.join("\n"); }
+  groups.forEach((g) => {
+    lines.push(heading(`👤 ${g.resp}${g.email ? ` <${g.email}>` : ""}`));
+    g.vehicles.forEach((v) => {
+      lines.push(`  ▸ ${v.label}`);
+      v.events.forEach((e) => {
+        const done = e.type === "task" ? (e.done ? "[x] " : "[ ] ") : "";
+        lines.push(`      • ${done}${meetingEventLabel(e.type)} (${formatTimeOnly(e.at)}): ${e.summary || "-"}`);
+      });
+    });
+    lines.push("");
+  });
+  return lines.join("\n").trimEnd();
 }
 
 function workbookToXlsxBase64(workbook) {
@@ -6448,44 +6513,33 @@ function workbookToXlsxBase64(workbook) {
 
 function meetingReportHtml(meeting) {
   const ev = meeting.events || [];
-  const novas = ev.filter((e) => e.type === "new");
-  const updates = ev.filter((e) => e.type === "update" || e.type === "close" || e.type === "reopen");
-  const tarefas = ev.filter((e) => e.type === "task");
-  const notas = ev.filter((e) => e.type === "note");
-  const rows = (arr) => arr.length
-    ? arr.map((e) => `<tr><td>${escapeHtml(formatTimeOnly(e.at))}</td><td>${escapeHtml(String(e.equipment || "-"))}</td><td>${escapeHtml(e.plate || "-")}</td><td>${escapeHtml(meetingEventLabel(e.type))}</td><td>${escapeHtml(e.summary || "-")}</td></tr>`).join("")
-    : `<tr><td colspan="5">(nenhuma)</td></tr>`;
-  const simpleRows = (arr, withState) => arr.length
-    ? arr.map((e) => `<tr><td>${escapeHtml(formatTimeOnly(e.at))}</td>${withState ? `<td>${e.done ? "Concluída" : "Pendente"}</td>` : ""}<td>${escapeHtml(e.summary || "-")}</td></tr>`).join("")
-    : `<tr><td colspan="${withState ? 3 : 2}">(nenhuma)</td></tr>`;
-  return `
+  const groups = groupMeetingEventsByResp(ev);
+  const dia = escapeHtml(formatDate((meeting.startedAt || "").slice(0, 10)));
+  const head = `
     <div style="font-family:Arial,sans-serif;color:#111827">
-      <h2 style="margin:0 0 4px">Relatório de reunião — ${escapeHtml(formatDate((meeting.startedAt || "").slice(0, 10)))}</h2>
+      <h2 style="margin:0 0 4px">Relatório de reunião — ${dia}</h2>
       <p style="color:#6b7280;margin:0 0 12px">
-        ${escapeHtml(formatTimeOnly(meeting.startedAt))}${meeting.endedAt ? ` – ${escapeHtml(formatTimeOnly(meeting.endedAt))} · ${meeting.durationMin} min` : " (a decorrer)"} · ${escapeHtml(meeting.operator || "-")}
-      </p>
-      <p><strong>${novas.length}</strong> novas avarias · <strong>${updates.length}</strong> atualizações · <strong>${tarefas.length}</strong> tarefas · <strong>${notas.length}</strong> notas</p>
-      <h3 style="margin:14px 0 6px">Novas avarias (${novas.length})</h3>
-      <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px">
-        <thead><tr style="background:#e8f3f1"><th>Hora</th><th>Equip.</th><th>Matrícula</th><th>Ação</th><th>Resumo</th></tr></thead>
-        <tbody>${rows(novas)}</tbody>
-      </table>
-      <h3 style="margin:14px 0 6px">Atualizações em avarias abertas (${updates.length})</h3>
-      <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px">
-        <thead><tr style="background:#e8f3f1"><th>Hora</th><th>Equip.</th><th>Matrícula</th><th>Ação</th><th>Resumo</th></tr></thead>
-        <tbody>${rows(updates)}</tbody>
-      </table>
-      <h3 style="margin:14px 0 6px">Tarefas (${tarefas.length})</h3>
-      <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px">
-        <thead><tr style="background:#e8f3f1"><th>Hora</th><th>Estado</th><th>Tarefa</th></tr></thead>
-        <tbody>${simpleRows(tarefas, true)}</tbody>
-      </table>
-      <h3 style="margin:14px 0 6px">Notas / observações (${notas.length})</h3>
-      <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px">
-        <thead><tr style="background:#e8f3f1"><th>Hora</th><th>Nota</th></tr></thead>
-        <tbody>${simpleRows(notas, false)}</tbody>
-      </table>
-    </div>`;
+        ${escapeHtml(formatTimeOnly(meeting.startedAt))}${meeting.endedAt ? ` – ${escapeHtml(formatTimeOnly(meeting.endedAt))} · ${meeting.durationMin} min` : " (a decorrer)"} · ${escapeHtml(meeting.operator || "-")} · ${ev.length} registos
+      </p>`;
+  if (!groups.length) return `${head}<p>(sem registos)</p></div>`;
+  const sections = groups.map((g) => {
+    const bodyRows = g.vehicles.map((v) => v.events.map((e, i) => `
+        <tr>
+          ${i === 0 ? `<td rowspan="${v.events.length}" style="vertical-align:top;font-weight:600;background:#f9fafb">${escapeHtml(v.label)}</td>` : ""}
+          <td style="white-space:nowrap">${escapeHtml(formatTimeOnly(e.at))}</td>
+          <td style="white-space:nowrap">${escapeHtml(meetingEventLabel(e.type))}${e.type === "task" ? (e.done ? " ✅" : " ⬜") : ""}</td>
+          <td>${escapeHtml(e.summary || "-")}</td>
+        </tr>`).join("")).join("");
+    return `
+      <h3 style="margin:18px 0 6px;padding:6px 10px;background:#0f766e;color:#fff;border-radius:4px">
+        👤 ${escapeHtml(g.resp)}${g.email ? ` <span style="font-weight:400;font-size:12px">&lt;${escapeHtml(g.email)}&gt;</span>` : ""}
+      </h3>
+      <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px;width:100%">
+        <thead><tr style="background:#e8f3f1"><th>Viatura</th><th>Hora</th><th>Tipo</th><th>Registo</th></tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>`;
+  }).join("");
+  return `${head}${sections}</div>`;
 }
 
 async function emailMeetingReport(id) {

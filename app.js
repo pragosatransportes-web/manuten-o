@@ -2769,9 +2769,12 @@ function getImmediateAlerts() {
 
 function getWorkshopBreakdown() {
   const active = state.breakdowns.filter((b) => b.status !== "Concluido");
+  // "Interna/Externa" contam apenas as intervenções em curso (na oficina) — mesmo critério
+  // do filtro do cartão (estágio "curso") para os números baterem certo.
+  const inCurso = active.filter((b) => matchesOccurrenceStage(b, "curso"));
   return {
-    interna: active.filter((b) => normalizeText(b.workshopType) === "interna").length,
-    externa: active.filter((b) => normalizeText(b.workshopType) === "externa").length,
+    interna: inCurso.filter((b) => normalizeText(b.workshopType) === "interna").length,
+    externa: inCurso.filter((b) => normalizeText(b.workshopType) === "externa").length,
     waitingParts: active.filter((b) => b.situation === "Aguarda peças").length,
     semPrevisao: active.filter((b) => b.situation === "Em oficina" && !b.expectedExitAt).length
   };

@@ -3819,10 +3819,8 @@ function openOccurrenceModal() {
         <p class="occ-section__title">2 · Viatura</p>
         <div class="field-row">
           <label class="field">Matrícula *
-            <select name="plate" id="occ-plate" required>
-              <option value="">Selecione a matrícula</option>
-              ${fleetPlateOptionsHtml("", linkPlate)}
-            </select>
+            <input name="plate" id="occ-plate" list="occ-plate-list" required autocomplete="off" placeholder="Escrever ou escolher…"${linkPlate ? ` value="${escapeAttr(linkPlate)}"` : ""}>
+            <datalist id="occ-plate-list">${fleetPlateDatalistHtml()}</datalist>
           </label>
           <label class="field">Nº equipamento
             <input id="occ-equipment" name="equipment" readonly placeholder="(pela matrícula)">
@@ -3905,12 +3903,15 @@ function openOccurrenceModal() {
           <label class="field">Km
             <input type="number" name="km" min="0" placeholder="Quilómetros">
           </label>
-          <label class="field">Registado por
-            <input name="registeredBy" value="${escapeAttr(remoteConfig.operator || "")}">
+          <label class="field">Registado por *
+            <select name="registeredBy" required>
+              <option value="">—</option>
+              ${registeredByOptions(remoteConfig.operator || "")}
+            </select>
           </label>
         </div>
-        <label class="field field--wide">Resp. logística
-          <input name="logisticsResp" placeholder="Ex.: Ana Fialho">
+        <label class="field field--wide">Resp. logística <span class="occ-hint">(automático da viatura)</span>
+          <input name="logisticsResp" id="occ-logisticsResp" readonly placeholder="(pela matrícula)">
         </label>
         <label class="field field--wide">Ficheiro / fotografia
           <input type="file" name="attachments" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple>
@@ -4022,6 +4023,8 @@ function wireOccurrenceModal() {
       const p = pEq ? state.fleet.find((x) => String(x.equipment) === String(pEq)) : null;
       conj.value = p ? `${p.plate || "—"} · Equip. ${p.equipment || "-"}${p.description ? ` · ${p.description}` : ""}` : "";
     }
+    const lresp = root.querySelector("#occ-logisticsResp");
+    if (lresp) lresp.value = f?.logisticsResp || "";
     populateRecurrent();
     populateTypes();
     if (prevChk && prevChk.checked) populatePreventiveFields();
@@ -4065,6 +4068,28 @@ function fleetDescriptions() {
       .map((item) => (item.description || "").trim())
       .filter(Boolean)
   )].sort((a, b) => a.localeCompare(b, "pt"));
+}
+
+// Datalist de matrículas ordenado alfanumericamente (combobox pesquisável da Nova ocorrência).
+function fleetPlateDatalistHtml() {
+  return [...state.fleet]
+    .filter((f) => f.plate)
+    .sort((a, b) => (a.plate || "").localeCompare(b.plate || "", "pt", { numeric: true }))
+    .map((f) => `<option value="${escapeAttr(f.plate)}">${escapeHtml(`Equip. ${f.equipment || "-"}${f.description ? ` · ${f.description}` : ""}`)}</option>`)
+    .join("");
+}
+
+// Opções de "Registado por" a partir das Entidades (contacto ou empresa).
+function registeredByOptions(selected) {
+  const set = new Set();
+  (state.entidades || []).forEach((e) => {
+    const name = (e.contactoNome || e.empresa || "").trim();
+    if (name) set.add(name);
+  });
+  if (remoteConfig.operator) set.add(String(remoteConfig.operator).trim());
+  const sel = normalizeText(selected || "");
+  return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b, "pt"))
+    .map((n) => `<option value="${escapeAttr(n)}"${normalizeText(n) === sel ? " selected" : ""}>${escapeHtml(n)}</option>`).join("");
 }
 
 function fleetPlateOptionsHtml(descFilter, selectedPlate) {

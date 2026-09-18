@@ -5744,6 +5744,16 @@ function distinctFleetDrivers() {
     .sort((a, b) => a.localeCompare(b, "pt"));
 }
 
+// Motoristas para as ausências: os da Frota + os das Entidades (categoria Motorista).
+function driverNameList() {
+  const set = new Set(distinctFleetDrivers());
+  entidadesByCategoria("Motorista").forEach((m) => {
+    const name = (m.empresa || m.contactoNome || "").trim();
+    if (name) set.add(name);
+  });
+  return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b, "pt"));
+}
+
 function fleetForDriver(driver) {
   const key = normalizeText(driver || "");
   if (!key) return [];
@@ -5897,7 +5907,7 @@ function renderAusencias() {
         </div>
       </div>
 
-      <datalist id="aus-drivers">${distinctFleetDrivers().map((d) => `<option value="${escapeAttr(d)}"></option>`).join("")}</datalist>
+      <datalist id="aus-drivers">${driverNameList().map((d) => `<option value="${escapeAttr(d)}"></option>`).join("")}</datalist>
       ${renderAusenciaRespFilter()}
       ${mode === "year"
         ? renderAusenciaYear(list)
@@ -6179,10 +6189,11 @@ function renderAusenciaCalendar(monthISO, list) {
       attrs = dayAbs.length ? ` data-action="ausencia-day" data-date="${dateISO}"` : "";
       extraCls = dayAbs.length ? " cal-cell--has" : "";
     }
-    cells.push(`<div class="cal-cell${dateISO === today ? " cal-cell--today" : ""}${extraCls}"${attrs}><span class="cal-day">${d}</span>${chips}</div>`);
+    const isWeekend = ((startWeekday + d - 1) % 7) >= 5;
+    cells.push(`<div class="cal-cell${dateISO === today ? " cal-cell--today" : ""}${isWeekend ? " cal-cell--weekend" : ""}${extraCls}"${attrs}><span class="cal-day">${d}</span>${chips}</div>`);
   }
 
-  const drivers = distinctFleetDrivers();
+  const drivers = driverNameList();
   const dirty = paintDirty(monthISO);
   const nDias = Object.keys(paint.days).length;
   const paintBar = `
@@ -6496,7 +6507,7 @@ function ausenciaVehiclePreviewHtml(driver) {
 }
 
 function openAusenciaModal() {
-  const drivers = distinctFleetDrivers();
+  const drivers = driverNameList();
   const body = `
     <form class="modal-form" data-form="new-ausencia">
       <label class="field field--wide">Motorista *

@@ -1411,7 +1411,8 @@ table .aus-inp { width: 100%; box-sizing: border-box; }
 
 .cal-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  /* Dias úteis mais largos; sábado e domingo mais estreitos para melhor leitura. */
+  grid-template-columns: repeat(5, 1fr) 0.6fr 0.6fr;
   gap: 6px;
   padding: 0 20px 16px;
 }
@@ -1419,6 +1420,7 @@ table .aus-inp { width: 100%; box-sizing: border-box; }
   padding-bottom: 0;
   gap: 6px;
 }
+.cal-cell--weekend { background: var(--surface-soft); }
 .cal-head {
   text-align: center;
   font-size: 12px;

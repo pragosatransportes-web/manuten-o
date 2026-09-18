@@ -36,10 +36,11 @@ const PRIORITIES = [
   ["P4", "Baixa — rotina / melhoria"]
 ];
 const OCCURRENCE_STAGES = [
-  ["", "Todas"],
+  ["comunicadas", "Comunicadas"],
   ["agendadas", "Agendadas"],
   ["curso", "Em curso"],
-  ["concluidas", "Concluídas"]
+  ["concluidas", "Concluídas"],
+  ["", "Todas"]
 ];
 
 // Descrições padronizadas dos equipamentos (menu na Frota).
@@ -325,6 +326,7 @@ document.addEventListener("click", async (event) => {
     state.filters.status       = statusValue ? [statusValue] : [];
     state.filters.situation    = [];
     state.filters.type         = [];
+    state.filters.respLog      = [];
     state.filters.company      = [];
     state.filters.workshopType = "";
     state.filters.semPrevisao  = false;
@@ -822,6 +824,7 @@ function makeInitialState() {
       status: [],
       situation: [],
       type: [],
+      respLog: [],
       company: [],
       workshopType: "",
       semPrevisao: false,
@@ -3104,7 +3107,7 @@ function renderFilters(context) {
       ${searchFieldHtml("search", searchPlaceholder)}
       ${renderMultiFilter("status", "Estados", options.statuses)}
       ${renderMultiFilter("situation", "Situações", options.situations)}
-      ${renderMultiFilter("type", "Tipos", options.types)}
+      ${renderMultiFilter("respLog", "Resp. LOG.", respLogEntidades().map((e) => e.empresa || e.contactoNome).filter(Boolean))}
       ${renderMultiFilter("company", "Empresas", ["CPSA", "PTSA"])}
       ${sortButton}
     </div>
@@ -3376,7 +3379,6 @@ function breakdownListRow(item) {
     <td><strong>${escapeHtml(item.equipment || "-")}</strong></td>
     <td>${escapeHtml(item.plate || "-")}</td>
     <td>${escapeHtml(getBreakdownCompany(item) || "-")}</td>
-    <td>${escapeHtml(item.type || "-")}</td>
     <td>${statusBadge(item.status)}</td>
     <td>${escapeHtml(item.situation || "-")}</td>
     <td>${renderAttachmentSummary(item)}</td>
@@ -3422,7 +3424,10 @@ function matchesOccurrenceStage(item, stage) {
   if (!stage) return true;
   if (stage === "agendadas") return item.status === "Agendado";
   if (stage === "concluidas") return item.status === "Concluido";
-  if (stage === "curso") return item.status !== "Concluido" && item.status !== "Agendado";
+  const active = item.status !== "Concluido" && item.status !== "Agendado";
+  // Comunicada = reportada/à espera (ainda sem entrada na oficina). Em curso = já em oficina.
+  if (stage === "comunicadas") return active && item.situation !== "Em oficina";
+  if (stage === "curso") return active && item.situation === "Em oficina";
   return true;
 }
 
@@ -3458,7 +3463,6 @@ function renderBreakdowns() {
                 <th>Equip.</th>
                 <th>Matrícula</th>
                   <th>Empresa</th>
-                  <th>Tipo</th>
                   <th>Estado</th>
                   <th>Situação</th>
                   <th>Anexos</th>
@@ -6637,16 +6641,23 @@ function daysUntil(dateValue) {
   return daysBetween(todayISO(), dateValue);
 }
 
+// Responsável de logística de uma ocorrência, via a viatura (equipamento/matrícula).
+function breakdownResp(b) {
+  const f = (b.equipment && state.fleet.find((x) => String(x.equipment) === String(b.equipment)))
+    || (b.plate && findFleetByPlate(b.plate)) || null;
+  return f && f.logisticsResp ? f.logisticsResp : "";
+}
+
 function getFilteredBreakdowns(activeOnly) {
   const search = normalizeText(state.filters.search);
   let list = state.breakdowns.filter((item) => !activeOnly || item.status !== "Concluido");
   const statusF = filterArray("status");
   const situationF = filterArray("situation");
-  const typeF = filterArray("type");
+  const respLogF = filterArray("respLog");
   const companyF = filterArray("company");
   if (statusF.length) list = list.filter((item) => statusF.includes(item.status));
   if (situationF.length) list = list.filter((item) => situationF.includes(item.situation));
-  if (typeF.length) list = list.filter((item) => typeF.includes(item.type));
+  if (respLogF.length) list = list.filter((item) => respLogF.includes(breakdownResp(item)));
   if (companyF.length) list = list.filter((item) => companyF.includes(getBreakdownCompany(item)));
   if (state.filters.workshopType) list = list.filter((item) => normalizeText(item.workshopType) === normalizeText(state.filters.workshopType));
   if (state.filters.semPrevisao) list = list.filter((item) => item.status !== "Concluido" && item.situation === "Em oficina" && !item.expectedExitAt);
@@ -6933,7 +6944,7 @@ function findFleetByPlate(value) {
 
 function resetBrowseFilters() {
   Object.assign(state.filters, {
-    search: "", status: [], situation: [], type: [], company: [],
+    search: "", status: [], situation: [], type: [], respLog: [], company: [],
     workshopType: "", semPrevisao: false, occurrenceStale: false, occurrenceStage: "",
     fleetSearch: "", fleetScope: "",
     auditSearch: "", auditType: "", auditPeriod: "",

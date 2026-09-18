@@ -293,6 +293,7 @@ document.addEventListener("click", async (event) => {
     if (view === "meeting") state.meetingView = getActiveMeeting() ? "work" : "home";
     state.currentView = view;
     saveState();
+    setViewHash(view);
     render();
     return;
   }
@@ -7761,7 +7762,33 @@ function escapeAttr(value) {
 // Arranque no fim do ficheiro: garante que todos os listeners já estão registados
 // antes do primeiro render, para que um erro de renderização nunca deixe a app
 // sem interação (ecrã em branco e botões mortos).
+// ── Routing por hash: cada vista tem URL (#fleet, #breakdowns, …) para poder
+// abrir/partilhar em novo separador (FASE3). ────────────────────────────────
+let _navigatingHash = false;
+function allViewIds() {
+  const s = new Set();
+  NAV_GROUPS.forEach((g) => g.views.forEach(([v]) => s.add(v)));
+  return s;
+}
+function setViewHash(view) {
+  if ((location.hash.slice(1)) !== view) { _navigatingHash = true; location.hash = view; }
+}
+window.addEventListener("hashchange", () => {
+  if (_navigatingHash) { _navigatingHash = false; return; }
+  const v = decodeURIComponent(location.hash.slice(1));
+  if (v && allViewIds().has(v) && v !== state.currentView) {
+    resetBrowseFilters();
+    if (v === "meeting") state.meetingView = getActiveMeeting() ? "work" : "home";
+    state.currentView = v;
+    saveState();
+    render();
+  }
+});
+
 function bootstrap() {
+  const hv = decodeURIComponent((location.hash || "").slice(1));
+  if (hv && allViewIds().has(hv)) state.currentView = hv;
+  else if (state.currentView) setViewHash(state.currentView);
   try {
     render();
   } catch (error) {

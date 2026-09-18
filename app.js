@@ -3898,6 +3898,9 @@ function openOccurrenceModal() {
           <button type="button" class="btn-sec" id="occ-fault-add-btn">＋ Adicionar avaria</button>
         </div>
         <div id="occ-fault-list" class="occ-fault-list"></div>
+        <label class="field field--wide">Descrição
+          <textarea name="description" rows="3">${escapeHtml(descPrefill)}</textarea>
+        </label>
         <div class="field-row">
           <label class="field">Km
             <input type="number" name="km" min="0" placeholder="Quilómetros">
@@ -3908,9 +3911,6 @@ function openOccurrenceModal() {
         </div>
         <label class="field field--wide">Resp. logística
           <input name="logisticsResp" placeholder="Ex.: Ana Fialho">
-        </label>
-        <label class="field field--wide">Descrição *
-          <textarea name="description" rows="3" required>${escapeHtml(descPrefill)}</textarea>
         </label>
         <label class="field field--wide">Ficheiro / fotografia
           <input type="file" name="attachments" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple>
@@ -5557,9 +5557,12 @@ function faultTypeOptionsHtml(vehicleType, selectedSet) {
       options.types.map((t) => `<option value="${escapeAttr(t)}"${isSel(t)}>${escapeHtml(t)}</option>`).join("");
   }
   let html = "";
-  for (const [grupo, items] of groups) {
+  // Grupos e itens organizados alfabeticamente (pedido ARGOS).
+  const orderedGroups = [...groups.entries()].sort((a, b) => (a[0] || "").localeCompare(b[0] || "", "pt"));
+  for (const [grupo, items] of orderedGroups) {
+    const orderedItems = [...items].sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt"));
     html += `<optgroup label="${escapeAttr(grupo || "Outros")}">` +
-      items.map((t) => `<option value="${escapeAttr(t.nome)}"${isSel(t.nome)} data-prio="${escapeAttr(t.suggestedPriority || "")}">${escapeHtml(t.nome)}${t.hint ? ` — ${escapeHtml(t.hint)}` : ""}</option>`).join("") +
+      orderedItems.map((t) => `<option value="${escapeAttr(t.nome)}"${isSel(t.nome)} data-prio="${escapeAttr(t.suggestedPriority || "")}">${escapeHtml(t.nome)}${t.hint ? ` — ${escapeHtml(t.hint)}` : ""}</option>`).join("") +
       `</optgroup>`;
   }
   return html;

@@ -636,10 +636,13 @@ function toolbarHTML(showEstado){
     ${msDropdown("transps","Transportadores",tps)}
     ${msDropdown("origens","Origens",ors.map(o=>({v:o,l:o})))}
     ${showEstado?msDropdown("estados","Estados",Object.entries(ESTADOS).map(([k,v])=>({v:k,l:v.label}))):""}
+    ${activeTab==="logistica"?`<button class="btn sm${soRascunhos()?" primary":""}" onclick="toggleRascunhos()" title="Mostrar apenas linhas em rascunho">📝 Rascunhos</button>`:""}
     <span class="km-flt">Km <input id="flt-kmin" type="number" step="1" placeholder="mín" value="${esc(filters.kmMin)}" oninput="fltNum(this,'kmMin')"> – <input id="flt-kmax" type="number" step="1" placeholder="máx" value="${esc(filters.kmMax)}" oninput="fltNum(this,'kmMax')"></span>
     <button class="btn sm" id="flt-clear" onclick="limparFiltros()" ${filtrosAtivos()?"":"hidden"}>✕ Limpar filtros</button>
   </div>`;
 }
+function soRascunhos(){return filters.estados.length===1 && filters.estados[0]==="rascunho"}
+function toggleRascunhos(){filters.estados=soRascunhos()?[]:["rascunho"];render()}
 function filtrosAtivos(){return !!(filters.q||filters.cats.length||filters.transps.length||filters.origens.length||filters.estados.length||filters.kmMin!==""||filters.kmMax!=="")}
 function updateClearBtn(){const b=document.getElementById("flt-clear");if(b)b.hidden=!filtrosAtivos()}
 function toggleMs(key){const p=document.getElementById("ms-"+key);if(!p)return;const abrir=p.hidden;document.querySelectorAll(".ms-panel").forEach(x=>x.hidden=true);p.hidden=!abrir;if(!p.hidden){const q=document.getElementById("ms-q-"+key);if(q)setTimeout(()=>q.focus(),30)}}

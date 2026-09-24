@@ -5888,7 +5888,10 @@ function refreshAusenciaModal() {
 function renderAusencias() {
   const mode = state.ausenciaViewMode === "month" ? "month" : "year";
   const monthISO = state.ausenciaMonth || currentMonthISO();
-  const list = [...state.ausencias].sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)));
+  // Filtro por Responsável de Logística aplicado a TODAS as vistas (anual, mensal e tabela).
+  const respF = state.filters.ausenciaResp || "";
+  const respMatch = (a) => !respF || driverLogisticsResp(a.driver) === respF;
+  const list = [...state.ausencias].filter(respMatch).sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)));
   const monthAbs = list.filter((a) => absenceOverlapsMonth(a, monthISO));
 
   return `

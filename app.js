@@ -6713,9 +6713,13 @@ function getFilteredBreakdowns(activeOnly) {
     return ref && daysBetween(ref, todayISO()) > 7;
   });
   if (search) {
+    // Pesquisa tolerante ao hífen/espaço: "25zo44" encontra "25-ZO-44" (e vice-versa),
+    // mantendo o match normal para pesquisas com várias palavras.
+    const nohyphen = (s) => s.replace(/[-\s]/g, "");
+    const searchNoHyphen = nohyphen(search);
     list = list.filter((item) => {
       const haystack = normalizeText(`${item.id} ${item.equipment} ${item.plate} ${item.type} ${item.status} ${item.situation} ${item.workshop} ${item.description} ${item.lastNote} ${formatAttachmentNames(item.attachments)}`);
-      return haystack.includes(search);
+      return haystack.includes(search) || nohyphen(haystack).includes(searchNoHyphen);
     });
   }
   return sortedBreakdowns(list);

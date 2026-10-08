@@ -173,7 +173,7 @@ try { isAdmin = sessionStorage.getItem(ADMIN_STORAGE_KEY) === "1"; } catch (e) {
 // Tudo o resto (atualizar estados, concluir, editar, acrescentar) é livre.
 const ADMIN_ACTIONS = new Set([
   "delete-fleet", "delete-ausencia", "delete-vistoria", "delete-entidade", "delete-fault-type",
-  "delete-breakdown",
+  "delete-breakdown", "history-delete",
   "reassign-vehicle",
   "meeting-event-delete", "dock-item-delete", "delete-meeting"
 ]);
@@ -432,6 +432,9 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "delete-breakdown") {
     await deleteBreakdown(button.dataset.id);
+  }
+  if (action === "history-delete") {
+    await deleteHistoryEntry(button.dataset.id, Number(button.dataset.index));
   }
   if (action === "reassign-vehicle") {
     await reassignBreakdownVehicle(button.dataset.id);
@@ -2568,8 +2571,8 @@ function editMeetingEventFromReport(meetingId, eventId) {
 // Navegação em 2 níveis: 5 áreas, cada uma com as suas secções (redesign ARGOS).
 const NAV_GROUPS = [
   { id: "dashboard", label: "Dashboard", views: [["dashboard", "Dashboard"]] },
-  { id: "manutencao", label: "Manutenção", views: [["gantt", "Planeamento"], ["breakdowns", "Ocorrências"], ["meeting", "Reuniões"]] },
-  { id: "frota", label: "Frota", views: [["fleet", "Viaturas"], ["fleet-inativas", "Inativas"], ["vistoria", "Vistorias"], ["ausencias", "Ausências"], ["definicoes", "Definições"]] },
+  { id: "manutencao", label: "Manutenção", views: [["gantt", "Planeamento"], ["breakdowns", "Ocorrências"], ["definicoes", "Prioridades"], ["meeting", "Reuniões"]] },
+  { id: "frota", label: "Frota", views: [["fleet", "Viaturas"], ["fleet-inativas", "Inativas"], ["vistoria", "Vistorias"], ["ausencias", "Ausências"]] },
   { id: "entidades", label: "Entidades", views: [["entidades", "Entidades"]] },
   { id: "analise", label: "Análise", views: [["audit", "Rastreio"]] }
 ];
@@ -3211,16 +3214,16 @@ function renderDetail(breakdown) {
     oficinaOpts += `<option value="${escapeAttr(breakdown.workshop)}" selected>${escapeHtml(breakdown.workshop)} (atual)</option>`;
   }
   return `
-    <div class="detail-head">
-      <div>
-        <p class="eyebrow">${escapeHtml(breakdown.occurrenceNumber || "Ocorrência")} · ${escapeHtml(breakdown.interventionType || "Corretiva")}</p>
-        <h2>Equip. ${escapeHtml(breakdown.equipment || "-")}</h2>
+    <div class="detail-head detail-head--occ">
+      <p class="eyebrow">${escapeHtml(breakdown.interventionType || "Corretiva")} ${escapeHtml(breakdown.occurrenceNumber || "")}${breakdown.recurrentOf ? ` · <span class="detail-reinc">reincidente ${escapeHtml(breakdown.recurrentOf)}</span>` : ""}</p>
+      <div class="detail-occ-id">
+        <strong class="detail-plate">${escapeHtml(breakdown.plate || "—")}</strong>
+        <span class="detail-equip">Equip. ${escapeHtml(breakdown.equipment || "-")}</span>
       </div>
-      <div class="detail-subtitle">
-        <span>${escapeHtml(breakdown.plate || "-")}</span>
+      <div class="detail-occ-meta">
         ${priorityBadge(breakdown.priority)}
         ${statusBadge(breakdown.status)}
-        ${progressBadge(breakdown)}
+        <span class="detail-progress-lg">${progressBadge(breakdown)}</span>
       </div>
     </div>
 
@@ -3228,26 +3231,18 @@ function renderDetail(breakdown) {
       <div><dt>Abertura</dt><dd>${formatDate(breakdown.reportedAt)}</dd></div>
       <div><dt>Comunicação</dt><dd>${breakdown.communicatedAt ? formatDate(breakdown.communicatedAt) : "-"}</dd></div>
       <div><dt>No terreno</dt><dd>${breakdown.onSite ? "Sim" : "Não"}</dd></div>
+      <div><dt>Km</dt><dd>${breakdown.km ? escapeHtml(String(breakdown.km)) : "-"}</dd></div>
       <div><dt>Prev. entrada</dt><dd>${breakdown.expectedEntryAt ? formatDate(breakdown.expectedEntryAt) : "-"}</dd></div>
       <div><dt>Prev. saída</dt><dd>${formatDate(breakdown.expectedExitAt)}</dd></div>
       <div><dt>Entrada oficina</dt><dd>${formatDate(breakdown.workshopEntryAt)}</dd></div>
       <div><dt>Saída oficina</dt><dd>${formatDate(breakdown.workshopExitAt)}</dd></div>
-      <div><dt>Km</dt><dd>${breakdown.km ? escapeHtml(String(breakdown.km)) : "-"}</dd></div>
       <div><dt>Registado por</dt><dd>${escapeHtml(breakdown.registeredBy || "-")}</dd></div>
       <div><dt>Resp. logística</dt><dd>${escapeHtml(breakdown.logisticsResp || "-")}</dd></div>
       ${breakdown.recurrentOf ? `<div><dt>Reincidente de</dt><dd>${escapeHtml(breakdown.recurrentOf)}</dd></div>` : ""}
-      <div><dt>Última nota</dt><dd>${escapeHtml(breakdown.lastNote || "-")}</dd></div>
     </dl>
 
     <div class="detail-faults">
       <div class="detail-faults__head"><h3>Avarias ${progressBadge(breakdown)}</h3></div>
-      ${faultsSorted.length ? faultsSorted.map((f) => `
-        <div class="fault-item${f.resolvida ? " done" : ""}">
-          <button class="fault-check" type="button" data-action="fault-toggle" data-id="${escapeAttr(breakdown.id)}" data-fault="${escapeAttr(f.id)}" title="${f.resolvida ? "Marcar por resolver" : "Marcar resolvida"}">${f.resolvida ? "✅" : "⬜"}</button>
-          ${priorityBadge(f.prioridade)}
-          <span class="fault-item__t">${escapeHtml(f.tipo)}</span>
-          <button class="g-x" type="button" data-action="fault-remove" data-id="${escapeAttr(breakdown.id)}" data-fault="${escapeAttr(f.id)}" title="Remover avaria">×</button>
-        </div>`).join("") : '<p class="empty-state">Sem avarias registadas. Adicione abaixo.</p>'}
       <div class="detail-faults__add">
         <select id="detail-fault-select-${escapeAttr(breakdown.id)}">
           <option value="" disabled selected>Escolher tipo de avaria…</option>
@@ -3255,6 +3250,13 @@ function renderDetail(breakdown) {
         </select>
         <button class="btn-sec" type="button" data-action="fault-add" data-id="${escapeAttr(breakdown.id)}">＋ Avaria</button>
       </div>
+      ${faultsSorted.length ? faultsSorted.map((f) => `
+        <div class="fault-item${f.resolvida ? " done" : ""}">
+          <button class="fault-check" type="button" data-action="fault-toggle" data-id="${escapeAttr(breakdown.id)}" data-fault="${escapeAttr(f.id)}" title="${f.resolvida ? "Marcar por resolver" : "Marcar resolvida"}">${f.resolvida ? "✅" : "⬜"}</button>
+          ${priorityBadge(f.prioridade)}
+          <span class="fault-item__t">${escapeHtml(f.tipo)}</span>
+          <button class="g-x" type="button" data-action="fault-remove" data-id="${escapeAttr(breakdown.id)}" data-fault="${escapeAttr(f.id)}" title="Remover avaria">×</button>
+        </div>`).join("") : '<p class="empty-state">Sem avarias registadas. Adicione acima.</p>'}
     </div>
 
     ${breakdown.vistoriaId ? `
@@ -3262,8 +3264,6 @@ function renderDetail(breakdown) {
         <span>🔗 Origem: <strong>vistoria de ${escapeHtml(formatDate(breakdown.vistoriaDate))}</strong>${breakdown.vistoriaItem ? ` — ponto <strong>${escapeHtml(breakdown.vistoriaItem)}</strong>` : ""}.</span>
         <button class="chip-link" type="button" data-action="select-vistoria" data-id="${escapeAttr(breakdown.vistoriaId)}">Ver vistoria</button>
       </div>` : ""}
-
-    ${renderAttachments(breakdown)}
 
     <div class="admin-reassign">
       <p class="admin-reassign__title">🔒 Admin · Reafetar viatura</p>
@@ -3283,14 +3283,14 @@ function renderDetail(breakdown) {
     <form class="quick-form" data-form="quick-update">
       <div class="form-grid">
         <label class="field">
-          <span>Tipo de intervenção</span>
-          <select name="interventionType">
+          <span>Tipo de intervenção ${isAdmin ? "" : '<span class="lock-ico" title="Só ADMIN">🔒</span>'}</span>
+          <select name="interventionType"${isAdmin ? "" : " disabled"}>
             ${INTERVENTION_TYPES.map((t) => `<option value="${escapeAttr(t)}" ${(breakdown.interventionType || "Corretiva") === t ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}
           </select>
         </label>
         <label class="field">
-          <span>Prioridade</span>
-          <select name="priority">
+          <span>Prioridade ${isAdmin ? "" : '<span class="lock-ico" title="Só ADMIN">🔒</span>'}</span>
+          <select name="priority"${isAdmin ? "" : " disabled"}>
             <option value="" ${!breakdown.priority ? "selected" : ""}>—</option>
             ${PRIORITIES.map(([p, label]) => `<option value="${escapeAttr(p)}" ${breakdown.priority === p ? "selected" : ""}>${escapeHtml(p)} · ${escapeHtml(label)}</option>`).join("")}
           </select>
@@ -3306,6 +3306,18 @@ function renderDetail(breakdown) {
           <select name="situation">
             <option value="" ${!breakdown.situation ? "selected" : ""}></option>
             ${options.situations.map((situation) => `<option value="${escapeAttr(situation)}" ${breakdown.situation === situation ? "selected" : ""}>${escapeHtml(situation)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Km</span>
+          <input type="number" name="km" min="0" value="${escapeAttr(breakdown.km || "")}" placeholder="Quilómetros">
+        </label>
+        <label class="field">
+          <span>Reincidente de</span>
+          <select name="recurrentOf">
+            <option value="">— não reincidente —</option>
+            ${occurrencesForPlate(breakdown.plate).filter((o) => o.number !== breakdown.occurrenceNumber).map((o) => `<option value="${escapeAttr(o.number)}"${breakdown.recurrentOf === o.number ? " selected" : ""}>${escapeHtml(o.label)}</option>`).join("")}
+            ${breakdown.recurrentOf && !occurrencesForPlate(breakdown.plate).some((o) => o.number === breakdown.recurrentOf) ? `<option value="${escapeAttr(breakdown.recurrentOf)}" selected>${escapeHtml(breakdown.recurrentOf)}</option>` : ""}
           </select>
         </label>
         <label class="field">
@@ -3332,12 +3344,16 @@ function renderDetail(breakdown) {
           </select>
         </label>
         <label class="field">
-          <span>Motorista</span>
-          <input name="driver" value="${escapeAttr(breakdown.driver || "")}" placeholder="Motorista">
+          <span>Motorista ${isAdmin ? "" : '<span class="lock-ico" title="Só ADMIN">🔒</span>'}</span>
+          <select name="driver"${isAdmin ? "" : " disabled"}>
+            <option value="">—</option>
+            ${driverNameList().map((d) => `<option value="${escapeAttr(d)}"${normalizeText(d) === normalizeText(breakdown.driver || "") ? " selected" : ""}>${escapeHtml(d)}</option>`).join("")}
+            ${breakdown.driver && !driverNameList().some((d) => normalizeText(d) === normalizeText(breakdown.driver)) ? `<option value="${escapeAttr(breakdown.driver)}" selected>${escapeHtml(breakdown.driver)} (atual)</option>` : ""}
+          </select>
         </label>
         <label class="field full-span">
-          <span>Descrição</span>
-          <textarea name="description" placeholder="Descrição da avaria">${escapeHtml(breakdown.description || "")}</textarea>
+          <span>Descrição ${isAdmin ? "" : '<span class="lock-ico" title="Só ADMIN">🔒</span>'}</span>
+          <textarea name="description" placeholder="Descrição da avaria"${isAdmin ? "" : " disabled"}>${escapeHtml(breakdown.description || "")}</textarea>
         </label>
         <label class="field full-span">
           <span>Nota</span>
@@ -3347,20 +3363,21 @@ function renderDetail(breakdown) {
           <span>Adicionar ficheiros/fotografias</span>
           <input type="file" name="attachments" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple>
         </label>
+        <div class="field full-span">${renderAttachments(breakdown)}</div>
       </div>
-      <div class="button-row">
+      <div class="button-row detail-actions">
         <button class="primary-button" type="submit" data-intent="update">
           <span data-icon="save"></span>
-          <span>Atualizar</span>
+          <span>Atualizar e fechar</span>
         </button>
         ${breakdown.status !== "Concluido" ? `
-          <button class="danger-button" type="submit" data-intent="close">
+          <button class="danger-button detail-actions__right" type="submit" data-intent="close">
             <span data-icon="check"></span>
-            <span>Concluir</span>
+            <span>Encerrar ocorrência</span>
           </button>
         ` : ""}
         ${breakdown.status === "Concluido" ? `
-          <button class="ghost-button" type="submit" data-intent="reopen">
+          <button class="ghost-button detail-actions__right" type="submit" data-intent="reopen">
             <span data-icon="rotate"></span>
             <span>Reabrir ocorrência</span>
           </button>
@@ -3370,10 +3387,11 @@ function renderDetail(breakdown) {
 
     <div class="timeline">
       <h3>Histórico</h3>
-      ${timeline.length ? timeline.map((item) => `
+      ${timeline.length ? timeline.map((item, i) => `
         <article class="timeline-item">
           <time>${formatDate(item.date)}${item.status ? ` · ${escapeHtml(item.status)}` : ""}</time>
           <p>${escapeHtml(item.note)}</p>
+          <button class="dock-mini admin-only" type="button" data-action="history-delete" data-id="${escapeAttr(breakdown.id)}" data-index="${i}" title="Eliminar entrada (admin)">🗑️</button>
         </article>
       `).join("") : '<p class="empty-state">Sem histórico registado.</p>'}
     </div>
@@ -4991,10 +5009,17 @@ async function handleQuickUpdate(form, intent) {
   breakdown.workshopExitAt = emptyToNull(data.get("workshopExitAt"));
   breakdown.workshop = String(data.get("workshop") || "").trim();
   // "type" é derivado das avarias (multi-avaria) — não se escreve aqui.
+  const prevType = breakdown.interventionType;
   if (data.has("interventionType")) breakdown.interventionType = String(data.get("interventionType") || breakdown.interventionType || "Corretiva");
   if (data.has("priority")) breakdown.priority = String(data.get("priority") || "");
-  breakdown.driver = String(data.get("driver") || "").trim();
-  breakdown.description = String(data.get("description") || "").trim();
+  if (data.has("driver")) breakdown.driver = String(data.get("driver") || "").trim();
+  if (data.has("description")) breakdown.description = String(data.get("description") || "").trim();
+  if (data.has("km")) breakdown.km = emptyToNull(data.get("km"));
+  if (data.has("recurrentOf")) breakdown.recurrentOf = String(data.get("recurrentOf") || "").trim();
+  // Renumeração ao mudar o tipo de intervenção (item 29): o prefixo muda com o tipo.
+  if (breakdown.interventionType !== prevType && breakdown.occurrenceNumber) {
+    breakdown.occurrenceNumber = generateOccurrenceNumber(breakdown.interventionType, breakdown.reportedAt);
+  }
 
   let preventiveDone = null;
   if (finalStatus === "Concluido" && previous.status !== "Concluido") {
@@ -5023,7 +5048,9 @@ async function handleQuickUpdate(form, intent) {
   saveState();
   showToast(preventiveDone ? `Concluída. Próxima agendada: ${formatDate(preventiveDone.nextDate)}.` : intent === "close" ? "Avaria concluída." : intent === "reopen" ? "Ocorrência reaberta." : "Atualização guardada.");
   render();
-  refreshDetailModal();
+  // Atualizar e Encerrar fecham a janela (itens 32/33); Reabrir mantém aberta.
+  if (intent === "update" || intent === "close") closeModal(true);
+  else refreshDetailModal();
   if (typeof syncBreakdownToTrello === "function" && trelloNote) {
     syncBreakdownToTrello(breakdown, trelloNote);
   }
@@ -6675,6 +6702,30 @@ async function deleteAusencia(id) {
   refreshAusenciaModal();
   await persistRemoteSafely(async () => {
     await deleteAusenciaRemote(id);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
+// Eliminar uma entrada do histórico (só ADMIN, item 34). displayIndex = índice na timeline (parseHistory inverte).
+async function deleteHistoryEntry(breakdownId, displayIndex) {
+  const b = state.breakdowns.find((x) => String(x.id) === String(breakdownId));
+  if (!b || !Number.isFinite(displayIndex)) return;
+  const lines = String(b.historyNotes || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const actualIndex = lines.length - 1 - displayIndex; // a timeline mostra do mais recente para o mais antigo
+  if (actualIndex < 0 || actualIndex >= lines.length) return;
+  if (!window.confirm("Eliminar esta entrada do histórico?")) return;
+  lines.splice(actualIndex, 1);
+  b.historyNotes = lines.join("\n");
+  const last = parseHistory(b.historyNotes)[0];
+  b.lastNote = last ? last.note : "";
+  b.lastNoteAt = last ? last.date : "";
+  const auditEvent = logAudit(b, "Histórico", "Entrada de histórico eliminada");
+  saveState();
+  showToast("Entrada eliminada.");
+  render();
+  refreshDetailModal();
+  await persistRemoteSafely(async () => {
+    await persistBreakdownRemote(b);
     await persistAuditRemote(auditEvent);
   });
 }

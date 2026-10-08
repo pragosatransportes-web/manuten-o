@@ -1155,6 +1155,23 @@ body.modal-open { overflow: hidden; }
 .occurrence-stages { padding: 12px 16px 0; }
 .occ-cell strong { display: block; font-size: 12px; color: var(--ink); white-space: nowrap; }
 .occ-cell span { display: block; font-size: 10px; color: var(--muted); }
+/* Detalhe da ocorrência — cabeçalho reorganizado (ARGOS 07/10 itens 23/24). */
+.detail-head--occ { display: block; }
+.detail-occ-id { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 4px 0 8px; }
+.detail-plate { font-size: 26px; font-weight: 800; letter-spacing: 0.5px; color: var(--ink); }
+.detail-equip { font-size: 14px; color: var(--muted); white-space: nowrap; }
+.detail-occ-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.detail-reinc { color: var(--amber, #b45309); font-weight: 600; }
+.detail-progress-lg .prog-badge, .detail-progress-lg { font-size: 15px !important; }
+.detail-progress-lg .prog-badge { padding: 3px 10px; }
+.lock-ico { font-size: 11px; opacity: 0.7; }
+.quick-form [disabled] { background: #f3f4f6; color: var(--muted); cursor: not-allowed; }
+.detail-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.detail-actions__right { margin-left: auto; }
+.attachment-list { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+@media (max-width: 640px) { .attachment-list { grid-template-columns: repeat(2, 1fr); } }
+.timeline-item { position: relative; }
+.timeline-item [data-action="history-delete"] { position: absolute; top: 6px; right: 4px; }
 .occ-cell--link { cursor: pointer; }
 .occ-cell--link:hover strong { color: var(--accent); text-decoration: underline; }
 tr:hover .occ-cell--link { background: var(--accent-pale); }

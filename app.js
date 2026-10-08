@@ -3821,10 +3821,6 @@ function openOccurrenceModal() {
             <select name="priority"><option value="">—</option>${PRIORITIES.map(([p, l]) => `<option value="${escapeAttr(p)}">${escapeHtml(p)} · ${escapeHtml(l)}</option>`).join("")}</select>
           </label>
         </div>
-        <label class="field field--check"><input type="checkbox" name="recurrent" id="occ-recurrent"> <span>Ocorrência reincidente?</span></label>
-        <label class="field" id="occ-recurrent-wrap" hidden>Ocorrência anterior (mesma viatura)
-          <select name="recurrentOf" id="occ-recurrent-of"><option value="">— selecione a matrícula primeiro —</option></select>
-        </label>
       </div>
 
       <div class="occ-section">
@@ -3849,17 +3845,6 @@ function openOccurrenceModal() {
         <label class="field">Conjunto (trator/reboque)
           <input id="occ-conjunto" name="conjunto" readonly placeholder="(atribuído se a viatura tiver conjunto)">
         </label>
-        <div id="occ-preventive-wrap" hidden>
-          <label class="field field--check"><input type="checkbox" name="preventivePeriodic" id="occ-preventive"> <span>Preventiva periódica?</span></label>
-          <div class="field-row" id="occ-preventive-detail" hidden>
-            <label class="field">Intervenção a reagendar
-              <select name="preventiveField" id="occ-preventive-field"></select>
-            </label>
-            <label class="field">Periodicidade
-              <select name="preventiveMonths" id="occ-preventive-months"><option value="12">12 meses</option><option value="24">24 meses</option></select>
-            </label>
-          </div>
-        </div>
       </div>
 
       <div class="occ-section">
@@ -3902,13 +3887,31 @@ function openOccurrenceModal() {
 
       <div class="occ-section">
         <p class="occ-section__title">4 · Classificação e detalhes</p>
+        <div class="field-row">
+          <label class="field field--check"><input type="checkbox" name="recurrent" id="occ-recurrent"> <span>Ocorrência reincidente?</span></label>
+          <label class="field" id="occ-recurrent-wrap" hidden>Ocorrência anterior (mesma viatura)
+            <select name="recurrentOf" id="occ-recurrent-of"><option value="">— selecione a matrícula primeiro —</option></select>
+          </label>
+        </div>
+        <div id="occ-preventive-wrap" hidden>
+          <label class="field field--check"><input type="checkbox" name="preventivePeriodic" id="occ-preventive"> <span>Preventiva periódica?</span></label>
+          <div class="field-row" id="occ-preventive-detail" hidden>
+            <label class="field">Intervenção a reagendar
+              <select name="preventiveField" id="occ-preventive-field"></select>
+            </label>
+            <label class="field">Periodicidade
+              <select name="preventiveMonths" id="occ-preventive-months"><option value="12">12 meses</option><option value="24">24 meses</option></select>
+            </label>
+          </div>
+        </div>
         <label class="field field--wide">Avarias <span class="occ-hint">(escolhe o tipo e adiciona; podes juntar várias)</span></label>
         <div class="occ-fault-add">
           <select id="occ-fault-select"><option value="" disabled selected>Selecione a matrícula primeiro</option></select>
           <button type="button" class="btn-sec" id="occ-fault-add-btn">＋ Adicionar avaria</button>
         </div>
         <div id="occ-fault-list" class="occ-fault-list"></div>
-        <label class="field field--wide">Descrição
+        <label class="field field--check"><input type="checkbox" id="occ-desc-toggle"${descPrefill ? " checked" : ""}> <span>Adicionar descrição?</span></label>
+        <label class="field field--wide" id="occ-desc-wrap"${descPrefill ? "" : " hidden"}>Descrição adicional da avaria
           <textarea name="description" rows="3">${escapeHtml(descPrefill)}</textarea>
         </label>
         <div class="field-row">
@@ -3922,12 +3925,14 @@ function openOccurrenceModal() {
             </select>
           </label>
         </div>
-        <label class="field field--wide">Resp. logística <span class="occ-hint">(automático da viatura)</span>
-          <input name="logisticsResp" id="occ-logisticsResp" readonly placeholder="(pela matrícula)">
-        </label>
-        <label class="field field--wide">Ficheiro / fotografia
-          <input type="file" name="attachments" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple>
-        </label>
+        <div class="field-row">
+          <label class="field">Resp. logística <span class="occ-hint">(auto)</span>
+            <input name="logisticsResp" id="occ-logisticsResp" readonly placeholder="(pela matrícula)">
+          </label>
+          <label class="field">Ficheiro / fotografia
+            <input type="file" name="attachments" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple>
+          </label>
+        </div>
       </div>
 
       ${link ? `<p class="occ-linknote">🔗 Fica ligada à vistoria de ${escapeHtml(formatDate(link.date))} — ponto ${escapeHtml(link.item)}.</p>` : ""}
@@ -3938,8 +3943,23 @@ function openOccurrenceModal() {
       </div>
     </form>`;
 
-  openModal(link ? "Nova ocorrência (origem: vistoria)" : "Nova ocorrência", body, { size: "wide" });
+  openModal(link ? "Nova ocorrência (origem: vistoria)" : "Nova ocorrência", body, {
+    size: "wide",
+    closeGuard: () => !occFormDirty() || window.confirm("Tem dados inseridos nesta ocorrência.\nQuer sair sem gravar?")
+  });
   wireOccurrenceModal();
+}
+
+// Há dados relevantes por gravar na Nova ocorrência? (item 21)
+function occFormDirty() {
+  const root = document.querySelector("#modal-root");
+  if (!root || !root.querySelector('[data-form="new-breakdown"]')) return false;
+  const plate = root.querySelector("#occ-plate");
+  const desc = root.querySelector('[name="description"]');
+  if (plate && plate.value.trim()) return true;
+  if (Array.isArray(_occFaults) && _occFaults.length) return true;
+  if (desc && desc.value.trim()) return true;
+  return false;
 }
 
 function renderOccFaultsList(faults) {
@@ -4026,6 +4046,8 @@ function wireOccurrenceModal() {
   };
   const fillFromPlate = () => {
     const f = findFleetByPlate(plate.value);
+    // Canonicaliza a matrícula escrita sem hífen para a forma da Frota (item 16.1).
+    if (f && f.plate && normalizePlate(plate.value) === normalizePlate(f.plate) && plate.value !== f.plate) plate.value = f.plate;
     if (equip) equip.value = f?.equipment || "";
     if (driver) driver.value = f?.driver || "";
     if (vtype) vtype.value = f?.description || "";
@@ -4037,6 +4059,13 @@ function wireOccurrenceModal() {
     }
     const lresp = root.querySelector("#occ-logisticsResp");
     if (lresp) lresp.value = f?.logisticsResp || "";
+    // Oficina preferencial da viatura → preenche Tipo de oficina + Oficina (item 16.3).
+    if (f && f.preferredWorkshop && workshopSel) {
+      const ent = entidadesByCategoria("Oficina").find((o) => normalizeText(o.empresa) === normalizeText(f.preferredWorkshop));
+      if (workshopType && ent && ent.tipo) workshopType.value = ent.tipo;
+      filterOficinas();
+      workshopSel.value = f.preferredWorkshop;
+    }
     populateRecurrent();
     populateTypes();
     if (prevChk && prevChk.checked) populatePreventiveFields();
@@ -4055,6 +4084,16 @@ function wireOccurrenceModal() {
   };
 
   if (plate) plate.addEventListener("change", fillFromPlate);
+  // 16.2 — ao focar/clicar na matrícula já preenchida, limpa para a lista voltar a aparecer;
+  // se sair sem escolher, repõe o valor anterior.
+  if (plate) {
+    plate.addEventListener("focus", () => { plate.dataset.prev = plate.value; plate.value = ""; });
+    plate.addEventListener("blur", () => { if (!plate.value && plate.dataset.prev) { plate.value = plate.dataset.prev; } });
+  }
+  // 18 — caixa de descrição adicional só aparece com o visto.
+  const descToggle = root.querySelector("#occ-desc-toggle");
+  const descWrap = root.querySelector("#occ-desc-wrap");
+  if (descToggle && descWrap) descToggle.addEventListener("change", () => { descWrap.hidden = !descToggle.checked; });
   if (recurrentChk) recurrentChk.addEventListener("change", toggleRecurrent);
   if (onsite) onsite.addEventListener("change", toggleOnSite);
   if (workshopType) workshopType.addEventListener("change", filterOficinas);
@@ -4083,12 +4122,19 @@ function fleetDescriptions() {
 }
 
 // Datalist de matrículas ordenado alfanumericamente (combobox pesquisável da Nova ocorrência).
+// Inclui a forma SEM hífen para permitir pesquisar sem "-" (item 16.1).
 function fleetPlateDatalistHtml() {
-  return [...state.fleet]
+  const opts = [];
+  [...state.fleet]
     .filter((f) => f.plate)
     .sort((a, b) => (a.plate || "").localeCompare(b.plate || "", "pt", { numeric: true }))
-    .map((f) => `<option value="${escapeAttr(f.plate)}">${escapeHtml(`Equip. ${f.equipment || "-"}${f.description ? ` · ${f.description}` : ""}`)}</option>`)
-    .join("");
+    .forEach((f) => {
+      const hint = escapeHtml(`Equip. ${f.equipment || "-"}${f.description ? ` · ${f.description}` : ""}`);
+      opts.push(`<option value="${escapeAttr(f.plate)}">${hint}</option>`);
+      const noHy = f.plate.replace(/[-\s]/g, "");
+      if (noHy !== f.plate) opts.push(`<option value="${escapeAttr(noHy)}">${escapeHtml(f.plate)} · ${hint}</option>`);
+    });
+  return opts.join("");
 }
 
 // Opções de "Registado por" a partir das Entidades (contacto ou empresa).
@@ -5124,7 +5170,7 @@ async function handleNewBreakdown(form) {
   const originNote = breakdown.vistoriaId ? ` | Origem: vistoria ${formatDate(breakdown.vistoriaDate)} (${breakdown.vistoriaItem})` : "";
   const auditEvent = logAudit(breakdown, "Nova ocorrência", `${occurrenceNumber} · ${interventionType}${priority ? ` · ${priority}` : ""} — ${attachmentNote ? `${description} | Anexos: ${attachmentNote}` : description}${originNote}`);
   recordMeetingEvent("new", breakdown, description);
-  if (fromModal) closeModal();
+  if (fromModal) closeModal(true);
   saveState();
   showToast(`Ocorrência ${occurrenceNumber} criada.`);
   render();
@@ -5246,9 +5292,11 @@ function logFleetAudit(item, field, previous, next) {
 
 // ── MODAL (infra reutilizável) ────────────────────────────────────────────
 
+let _modalCloseGuard = null; // função opcional: devolve true p/ permitir fechar (ex.: aviso de dados inseridos)
 function openModal(title, bodyHtml, opts = {}) {
   const root = document.querySelector("#modal-root");
   if (!root) return;
+  _modalCloseGuard = typeof opts.closeGuard === "function" ? opts.closeGuard : null;
   const size = opts.size ? ` modal--${opts.size}` : "";
   root.innerHTML = `
     <div class="modal-overlay">
@@ -5268,7 +5316,13 @@ function openModal(title, bodyHtml, opts = {}) {
   if (first) setTimeout(() => first.focus(), 30);
 }
 
-function closeModal() {
+function closeModal(force) {
+  // Guard de fecho (ex.: Nova ocorrência com dados inseridos). force=true ignora-o (ex.: após gravar).
+  if (force !== true && typeof _modalCloseGuard === "function") {
+    const ok = _modalCloseGuard();
+    if (!ok) return;
+  }
+  _modalCloseGuard = null;
   const root = document.querySelector("#modal-root");
   if (root) root.innerHTML = "";
   document.body.classList.remove("modal-open");
@@ -5550,9 +5604,25 @@ const PREVENTIVE_FIELDS = [
   { field: "wheelHubReviewAt", label: "Cubos de roda", months: 12 },
   { field: "revisionAt", label: "Revisão", months: 12 }
 ];
+// Viatura rebocada (semi-reboque/reboque/basculante/cisterna/estrado/porta-máquinas) → leva cubos;
+// autopropelida (trator/carros água/cola/grua/rígido/xico) → leva tacógrafo. (ARGOS 07/10 item 22)
+function isTowedFleetDesc(desc) {
+  return /basculante|cisterna|estrado|porta|reboque|semi/.test(normalizeText(desc || ""));
+}
 function preventiveFieldsForPlate(plate) {
-  const trator = vehicleBucketForPlate(plate) === "Trator";
-  return PREVENTIVE_FIELDS.filter((p) => p.field !== "revisionAt" || trator);
+  const f = findFleetByPlate(plate);
+  if (isTowedFleetDesc(f ? f.description : "")) {
+    return [
+      { field: "inspectionAt", label: "Inspeção (IPO)", months: 12 },
+      { field: "compressorReviewAt", label: "Revisão compressor", months: 12 },
+      { field: "wheelHubReviewAt", label: "Cubos de roda", months: 12 }
+    ];
+  }
+  return [
+    { field: "inspectionAt", label: "Inspeção (IPO)", months: 12 },
+    { field: "tachographAt", label: "Aferição tacógrafo", months: 24 },
+    { field: "compressorReviewAt", label: "Revisão compressor", months: 12 }
+  ];
 }
 function preventiveMonthsFor(field) {
   const p = PREVENTIVE_FIELDS.find((x) => x.field === field);

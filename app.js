@@ -173,6 +173,7 @@ try { isAdmin = sessionStorage.getItem(ADMIN_STORAGE_KEY) === "1"; } catch (e) {
 // Tudo o resto (atualizar estados, concluir, editar, acrescentar) é livre.
 const ADMIN_ACTIONS = new Set([
   "delete-fleet", "delete-ausencia", "delete-vistoria", "delete-entidade", "delete-fault-type",
+  "delete-breakdown",
   "reassign-vehicle",
   "meeting-event-delete", "dock-item-delete", "delete-meeting"
 ]);
@@ -328,6 +329,7 @@ document.addEventListener("click", async (event) => {
     state.filters.situation    = [];
     state.filters.type         = [];
     state.filters.respLog      = [];
+    state.filters.oficina      = [];
     state.filters.company      = [];
     state.filters.workshopType = "";
     state.filters.semPrevisao  = false;
@@ -427,6 +429,9 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "close-breakdown") {
     await closeBreakdown(button.dataset.id);
+  }
+  if (action === "delete-breakdown") {
+    await deleteBreakdown(button.dataset.id);
   }
   if (action === "reassign-vehicle") {
     await reassignBreakdownVehicle(button.dataset.id);
@@ -826,6 +831,7 @@ function makeInitialState() {
       situation: [],
       type: [],
       respLog: [],
+      oficina: [],
       company: [],
       workshopType: "",
       semPrevisao: false,
@@ -842,7 +848,7 @@ function makeInitialState() {
       ausenciaResp: "",
       entidadeSearch: "",
       entidadeCategoria: "",
-      occurrenceStage: ""
+      occurrenceStage: "comunicadas"
     }
   };
 }
@@ -1188,6 +1194,12 @@ async function persistBreakdownRemote(breakdown) {
     .upsert(appBreakdownToDb(breakdown), { onConflict: "id" });
   if (error) throw error;
   updateSyncStatus("Partilhado em tempo real", "remote", true);
+}
+
+async function deleteBreakdownRemote(id) {
+  if (!remoteStatus.ready || !remoteClient) return;
+  const { error } = await remoteClient.from("avarias_breakdowns").delete().eq("id", String(id));
+  if (error) throw error;
 }
 
 async function persistAuditRemote(auditEvent) {
@@ -3109,10 +3121,11 @@ function renderFilters(context) {
   return `
     <div class="toolbar">
       ${searchFieldHtml("search", searchPlaceholder)}
+      ${renderMultiFilter("company", "Empresas", ["CPSA", "PTSA"])}
       ${renderMultiFilter("status", "Estados", options.statuses)}
       ${renderMultiFilter("situation", "Situações", options.situations)}
       ${renderMultiFilter("respLog", "Resp. LOG.", respLogEntidades().map((e) => e.empresa || e.contactoNome).filter(Boolean))}
-      ${renderMultiFilter("company", "Empresas", ["CPSA", "PTSA"])}
+      ${renderMultiFilter("oficina", "Oficina", entidadesByCategoria("Oficina").map((e) => e.empresa).filter(Boolean))}
       ${sortButton}
     </div>
   `;
@@ -3262,6 +3275,9 @@ function renderDetail(breakdown) {
         </select>
         <button class="ghost-button" type="button" data-action="reassign-vehicle" data-id="${escapeAttr(breakdown.id)}">Reafetar</button>
       </div>
+      <div class="admin-reassign__row" style="margin-top:10px">
+        <button class="danger-button" type="button" data-action="delete-breakdown" data-id="${escapeAttr(breakdown.id)}"><span data-icon="trash"></span><span>Eliminar ocorrência</span></button>
+      </div>
     </div>
 
     <form class="quick-form" data-form="quick-update">
@@ -3372,35 +3388,30 @@ function getBreakdownCompany(breakdown) {
   return fleetItem?.fleetCompany || "";
 }
 
+// Coluna "Datas" conforme o estado da ocorrência (ARGOS 07/10 item 14).
+function breakdownDatesCell(item) {
+  const d = (v) => (v && !isFleetNA(v)) ? formatDate(v) : "—";
+  if (item.status === "Concluido") return `Fecho: ${d(item.lastNoteAt || item.reportedAt)}`;
+  if (item.status === "Agendado") return `Prev. entrada: ${d(item.expectedEntryAt)}<br>Prev. saída: ${d(item.expectedExitAt)}`;
+  if (item.situation === "Em oficina") return `Entrada: ${d(item.workshopEntryAt)}<br>Saída: ${d(item.workshopExitAt)}`;
+  return `Comunicação: ${d(item.communicatedAt || item.reportedAt)}`;
+}
+
 function breakdownListRow(item) {
   return `<tr>
-    <td class="occ-cell">
+    <td class="occ-cell occ-cell--link" data-action="select-breakdown" data-id="${escapeAttr(item.id)}" title="Abrir ocorrência">
       <strong>${escapeHtml(item.occurrenceNumber || "—")}</strong>
       <span>${escapeHtml(item.interventionType || "Corretiva")}</span>
       ${priorityBadge(item.priority)}
       ${progressBadge(item)}
     </td>
-    <td><strong>${escapeHtml(item.equipment || "-")}</strong></td>
-    <td>${escapeHtml(item.plate || "-")}</td>
     <td>${escapeHtml(getBreakdownCompany(item) || "-")}</td>
+    <td>${escapeHtml(item.plate || "-")}</td>
     <td>${statusBadge(item.status)}</td>
     <td>${escapeHtml(item.situation || "-")}</td>
-    <td>${renderAttachmentSummary(item)}</td>
-    <td>Avaria: ${formatDate(item.reportedAt)}<br>Prev.: ${formatDate(item.expectedExitAt)}</td>
+    <td>${breakdownDatesCell(item)}</td>
     <td>${escapeHtml(item.workshop || item.workshopType || "-")}</td>
     <td class="compact-cell">${escapeHtml(item.lastNote || item.description || "-")}</td>
-    <td>
-      <div class="button-row">
-        <button class="icon-button" type="button" data-action="select-breakdown" data-id="${escapeAttr(item.id)}" title="Abrir">
-          <span data-icon="eye"></span>
-        </button>
-        ${item.status !== "Concluido" ? `
-          <button class="icon-button" type="button" data-action="close-breakdown" data-id="${escapeAttr(item.id)}" title="Concluir">
-            <span data-icon="check"></span>
-          </button>
-        ` : ""}
-      </div>
-    </td>
   </tr>`;
 }
 
@@ -3442,6 +3453,12 @@ function renderBreakdowns() {
   return `
     <section class="page-grid">
       <div class="panel">
+        <div class="chip-filters occurrence-stages">
+          ${OCCURRENCE_STAGES.map(([v, l]) => {
+            const active = (state.filters.occurrenceStage || "") === v;
+            return `<button type="button" class="chip-filter ${active ? "active" : ""}" data-action="occurrence-stage" data-stage="${escapeAttr(v)}">${escapeHtml(l)}</button>`;
+          }).join("")}
+        </div>
         <div class="panel-header">
           <div>
             <p class="eyebrow">Registos</p>
@@ -3452,28 +3469,19 @@ function renderBreakdowns() {
             <button class="primary-button" type="button" data-view="new"><span data-icon="plus"></span><span>Nova ocorrência</span></button>
           </div>
         </div>
-        <div class="chip-filters occurrence-stages">
-          ${OCCURRENCE_STAGES.map(([v, l]) => {
-            const active = (state.filters.occurrenceStage || "") === v;
-            return `<button type="button" class="chip-filter ${active ? "active" : ""}" data-action="occurrence-stage" data-stage="${escapeAttr(v)}">${escapeHtml(l)}</button>`;
-          }).join("")}
-        </div>
         ${renderFilters("breakdowns")}
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Ocorrência</th>
-                <th>Equip.</th>
+                <th>Empresa</th>
                 <th>Matrícula</th>
-                  <th>Empresa</th>
-                  <th>Estado</th>
-                  <th>Situação</th>
-                  <th>Anexos</th>
-                  <th>Datas</th>
+                <th>Estado</th>
+                <th>Situação</th>
+                <th>Datas</th>
                 <th>Oficina</th>
                 <th>Nota</th>
-                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -6601,6 +6609,32 @@ async function deleteAusencia(id) {
   });
 }
 
+async function deleteBreakdown(id) {
+  const b = state.breakdowns.find((x) => String(x.id) === String(id));
+  if (!b) return;
+  if (!window.confirm(`Eliminar definitivamente a ocorrência ${b.occurrenceNumber || id}${b.plate ? ` (${b.plate})` : ""}?\nEsta ação não pode ser anulada.`)) return;
+  state.breakdowns = state.breakdowns.filter((x) => x !== b);
+  const auditEvent = {
+    id: `AV-${id}-eliminada-${Date.now()}`,
+    breakdownId: "",
+    equipment: b.equipment || "",
+    plate: b.plate || "",
+    at: new Date().toISOString(),
+    action: "Ocorrência eliminada",
+    status: b.status || "",
+    note: `${b.occurrenceNumber || id}${b.plate ? ` · ${b.plate}` : ""}`
+  };
+  state.audit.unshift(auditEvent);
+  closeModal();
+  saveState();
+  showToast("Ocorrência eliminada.");
+  render();
+  await persistRemoteSafely(async () => {
+    await deleteBreakdownRemote(id);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
 function getMetrics() {
   const active = state.breakdowns.filter((item) => item.status !== "Concluido");
   const activeFleet = state.fleet.filter((item) => item.status === "Ativa").length || state.fleet.length || 1;
@@ -6700,10 +6734,12 @@ function getFilteredBreakdowns(activeOnly) {
   const statusF = filterArray("status");
   const situationF = filterArray("situation");
   const respLogF = filterArray("respLog");
+  const oficinaF = filterArray("oficina");
   const companyF = filterArray("company");
   if (statusF.length) list = list.filter((item) => statusF.includes(item.status));
   if (situationF.length) list = list.filter((item) => situationF.includes(item.situation));
   if (respLogF.length) list = list.filter((item) => respLogF.includes(breakdownResp(item)));
+  if (oficinaF.length) list = list.filter((item) => oficinaF.includes(item.workshop));
   if (companyF.length) list = list.filter((item) => companyF.includes(getBreakdownCompany(item)));
   if (state.filters.workshopType) list = list.filter((item) => normalizeText(item.workshopType) === normalizeText(state.filters.workshopType));
   if (state.filters.semPrevisao) list = list.filter((item) => item.status !== "Concluido" && item.situation === "Em oficina" && !item.expectedExitAt);
@@ -6994,8 +7030,8 @@ function findFleetByPlate(value) {
 
 function resetBrowseFilters() {
   Object.assign(state.filters, {
-    search: "", status: [], situation: [], type: [], respLog: [], company: [],
-    workshopType: "", semPrevisao: false, occurrenceStale: false, occurrenceStage: "",
+    search: "", status: [], situation: [], type: [], respLog: [], oficina: [], company: [],
+    workshopType: "", semPrevisao: false, occurrenceStale: false, occurrenceStage: "comunicadas",
     fleetSearch: "", fleetScope: "",
     auditSearch: "", auditType: "", auditPeriod: "",
     entidadeSearch: "", entidadeCategoria: "",

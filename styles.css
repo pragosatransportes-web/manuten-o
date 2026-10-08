@@ -1155,6 +1155,9 @@ body.modal-open { overflow: hidden; }
 .occurrence-stages { padding: 12px 16px 0; }
 .occ-cell strong { display: block; font-size: 12px; color: var(--ink); white-space: nowrap; }
 .occ-cell span { display: block; font-size: 10px; color: var(--muted); }
+.occ-cell--link { cursor: pointer; }
+.occ-cell--link:hover strong { color: var(--accent); text-decoration: underline; }
+tr:hover .occ-cell--link { background: var(--accent-pale); }
 .prio-badge { display: inline-block; margin-top: 3px; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.3px; }
 .prio-badge--p1 { background: #fee2e2; color: var(--red); }
 .prio-badge--p2 { background: #ffedd5; color: #9a3412; }

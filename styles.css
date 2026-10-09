@@ -316,6 +316,7 @@ body:not(.admin-mode) .admin-reassign { display: none; }
 body:not(.admin-mode) .admin-only { display: none; }
 /* Estado na coluna: fora do admin mostra o texto; em admin mostra o dropdown. */
 body.admin-mode .fleet-status-view { display: none; }
+body.admin-mode .non-admin-only { display: none; }
 .admin-reassign { margin: 12px 0; padding: 12px 14px; border: 1px dashed var(--amber); border-radius: var(--radius-sm); background: #fffbeb; }
 .admin-reassign__title { margin: 0 0 4px; font-size: 12px; font-weight: 700; color: var(--amber); }
 .admin-reassign__hint { margin: 0 0 8px; font-size: 11.5px; color: var(--muted); }
@@ -1077,8 +1078,11 @@ body.modal-open { overflow: hidden; }
 .fleet-viewtoggle button { padding: 6px 14px; font-size: 12.5px; border: none; background: var(--surface); color: var(--muted); cursor: pointer; }
 .fleet-viewtoggle button.active { background: var(--accent); color: #fff; }
 .fleet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; padding: 16px 18px; }
-.fleet-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); transition: box-shadow 150ms; }
-.fleet-card:hover { box-shadow: var(--shadow-sm); }
+/* F4: rebordo exterior mais demarcado. */
+.fleet-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 2px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); box-shadow: 0 1px 2px rgba(15,23,42,.05); transition: box-shadow 150ms, border-color 150ms; }
+.fleet-card:hover { box-shadow: var(--shadow-sm); border-color: var(--accent); }
+.fleet-filter { min-height: 36px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #fff; color: var(--ink); padding: 6px 9px; font-size: 12.5px; flex: 0 1 auto; }
+.fleet-mini__ro { font-size: 13px; font-weight: 400; color: var(--ink); padding: 5px 2px; }
 .fleet-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .fleet-card__id strong { font-size: 16px; color: var(--ink); letter-spacing: 0.3px; }
 .fleet-card__id span { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }

@@ -46,14 +46,15 @@ const OCCURRENCE_STAGES = [
 // Descrições padronizadas dos equipamentos (menu na Frota).
 const FLEET_DESCRIPTIONS = [
   "Trator",
+  "Rígido",
+  "Carro Grua",
+  "Carro Cola",
+  "Carro Água",
   "Semi-reboque basculante",
   "Semi-reboque cisterna",
   "Porta-máquinas",
-  "Carro Grua",
-  "Xico",
-  "Carro Cola",
-  "Carro Água",
-  "Estrado"
+  "Estrado",
+  "Xico"
 ];
 
 // Mês em foco no calendário de ausências, no formato "YYYY-MM".
@@ -173,7 +174,7 @@ try { isAdmin = sessionStorage.getItem(ADMIN_STORAGE_KEY) === "1"; } catch (e) {
 // Tudo o resto (atualizar estados, concluir, editar, acrescentar) é livre.
 const ADMIN_ACTIONS = new Set([
   "delete-fleet", "delete-ausencia", "delete-vistoria", "delete-entidade", "delete-fault-type",
-  "delete-breakdown", "history-delete",
+  "delete-breakdown", "history-delete", "fleet-edit-modal",
   "reassign-vehicle",
   "meeting-event-delete", "dock-item-delete", "delete-meeting"
 ]);
@@ -468,6 +469,9 @@ document.addEventListener("click", async (event) => {
   if (action === "new-fleet-modal") {
     openFleetModal();
   }
+  if (action === "fleet-edit-modal") {
+    openFleetEditModal(button.dataset.equipment);
+  }
   if (action === "new-ausencia-modal") {
     openAusenciaModal();
   }
@@ -743,6 +747,10 @@ document.addEventListener("submit", async (event) => {
     event.preventDefault();
     await handleNewFleet(form);
   }
+  if (form.dataset.form === "edit-fleet") {
+    event.preventDefault();
+    await handleEditFleet(form);
+  }
   if (form.dataset.form === "new-vistoria") {
     event.preventDefault();
     await handleNewVistoria(form);
@@ -861,6 +869,10 @@ function makeInitialState() {
       occurrenceStale: false,
       fleetSearch: "",
       fleetScope: "",
+      fleetFCompany: "",
+      fleetFResp: "",
+      fleetFDriver: "",
+      fleetFKind: "",
       auditSearch: "",
       auditType: "",
       auditPeriod: "",
@@ -4315,8 +4327,8 @@ function renderFleet() {
   }, {});
   const inactiveView = state.currentView === "fleet-inativas";
   const list = getFilteredFleet().filter((item) => inactiveView ? isFleetInactive(item) : !isFleetInactive(item));
-  const fleetView = state.fleetView === "table" ? "table" : "cards";
   const inactiveTotal = state.fleet.filter(isFleetInactive).length;
+  const sel = (key, val) => (state.filters[key] || "") === val ? " selected" : "";
 
   return `
     <section class="panel">
@@ -4334,14 +4346,13 @@ function renderFleet() {
       ${inactiveView ? `<p class="fleet-scope-note">Viaturas marcadas como <strong>Inativa</strong> — mantidas para consulta de histórico, fora do painel de ativas. Muda o Estado para <strong>Ativa</strong> (modo admin) para as trazer de volta.</p>` : ""}
       <div class="toolbar fleet-toolbar">
         ${searchFieldHtml("fleetSearch", "Pesquisar equipamento, matrícula ou marca")}
-        <div class="fleet-viewtoggle" role="group" aria-label="Modo de visualização">
-          <button type="button" class="${fleetView === "cards" ? "active" : ""}" data-action="fleet-view" data-mode="cards">Cartões</button>
-          <button type="button" class="${fleetView === "table" ? "active" : ""}" data-action="fleet-view" data-mode="table">Tabela</button>
-        </div>
+        <select class="fleet-filter" data-filter="fleetFCompany"><option value="">Empresa (todas)</option><option value="CPSA"${sel("fleetFCompany", "CPSA")}>CPSA</option><option value="PTSA"${sel("fleetFCompany", "PTSA")}>PTSA</option></select>
+        <select class="fleet-filter" data-filter="fleetFResp"><option value="">Resp. LOG (todos)</option>${respLogEntidades().map((e) => `<option value="${escapeAttr(e.empresa)}"${sel("fleetFResp", e.empresa)}>${escapeHtml(e.empresa)}</option>`).join("")}</select>
+        <select class="fleet-filter" data-filter="fleetFDriver"><option value="">Motorista (todos)</option>${driverNameList().map((d) => `<option value="${escapeAttr(d)}"${sel("fleetFDriver", d)}>${escapeHtml(d)}</option>`).join("")}</select>
+        <select class="fleet-filter" data-filter="fleetFKind"><option value="">Trator/Reboque</option><option value="trator"${sel("fleetFKind", "trator")}>Autopropelido</option><option value="reboque"${sel("fleetFKind", "reboque")}>Rebocado</option></select>
       </div>
       ${state.filters.fleetScope ? `<div class="fleet-scope-note">A filtrar: <strong>${escapeHtml(fleetScopeLabel(state.filters.fleetScope))}</strong> <button type="button" class="link-button" data-action="fleet-scope-clear">✕ limpar</button></div>` : ""}
-      <datalist id="fleet-resploglist">${respLogSuggestions().map((n) => `<option value="${escapeAttr(n)}"></option>`).join("")}</datalist>
-      ${fleetView === "table" ? renderFleetTable(list, activeCounts) : renderFleetCards(list, activeCounts)}
+      ${renderFleetCards(list, activeCounts)}
     </section>
   `;
 }
@@ -4420,23 +4431,29 @@ function computeFleetHealth(item) {
     if (d <= 30) return { tone: "yellow", word: "próxima", penalty: 6 };
     return { tone: "green", word: "válida", penalty: 0 };
   };
+  const towed = isTowedFleetDesc(item.description);
   let score = 100;
   open.forEach((b) => { score -= b.priority === "P1" ? 30 : b.priority === "P2" ? 18 : b.priority === "P3" ? 8 : b.priority === "P4" ? 4 : 12; });
-  const dateFields = ["inspectionAt", "tachographAt", "compressorReviewAt", "wheelHubReviewAt"];
-  if (isTratorFleet(item)) dateFields.push("revisionAt");
+  const dateFields = towed
+    ? ["inspectionAt", "compressorReviewAt", "wheelHubReviewAt"]
+    : ["inspectionAt", "compressorReviewAt", "tachographAt"];
   dateFields.forEach((f) => {
-    const p = dateHealth(item[f]).penalty;
+    const p = dateHealth(fleetEffectiveDate(item, f)).penalty;
     // Inspeção e tacógrafo são legais/bloqueantes — pesam mais.
     score -= (f === "inspectionAt" || f === "tachographAt") ? Math.round(p * 1.8) : p;
   });
   score -= recurrentCount * 6;
   score = Math.max(0, Math.min(100, Math.round(score)));
-  const insp = dateHealth(item.inspectionAt);
-  const taco = dateHealth(item.tachographAt);
+  // F12: ordem IPO – Compressor – (Tacógrafo|Cubos) – Avarias – Reincidências; F8: texto por tipo.
+  const insp = dateHealth(fleetEffectiveDate(item, "inspectionAt"));
+  const comp = dateHealth(fleetEffectiveDate(item, "compressorReviewAt"));
+  const third = towed ? dateHealth(item.wheelHubReviewAt) : dateHealth(item.tachographAt);
+  const thirdLabel = towed ? "Cubos" : "Tacógrafo";
   const factors = [
+    { label: `IPO ${insp.word}`, tone: insp.tone },
+    { label: `Compressor ${comp.word}`, tone: comp.tone },
+    { label: `${thirdLabel} ${third.word}`, tone: third.tone },
     { label: open.length ? `${open.length} avaria${open.length > 1 ? "s" : ""} aberta${open.length > 1 ? "s" : ""}` : "Sem avarias abertas", tone: open.length ? "red" : "green" },
-    { label: `Inspeção ${insp.word}`, tone: insp.tone },
-    { label: `Tacógrafo ${taco.word}`, tone: taco.tone },
     { label: recurrentCount ? `${recurrentCount} reincidência${recurrentCount > 1 ? "s" : ""}` : "Sem reincidências", tone: recurrentCount ? "yellow" : "green" }
   ];
   // Um fator crítico (vermelho) impede o verde, mesmo com pontuação alta.
@@ -4445,22 +4462,22 @@ function computeFleetHealth(item) {
   return { score, tone, factors };
 }
 
+// Campo do cartão: valor só-leitura fora de ADMIN; controlo editável em ADMIN (F5).
+function fleetMiniAdmin(label, valueText, controlHtml, headExtra = "") {
+  return `<label class="fleet-mini"><span>${escapeHtml(label)}${headExtra}</span>` +
+    `<span class="fleet-mini__ro non-admin-only">${escapeHtml(valueText || "—")}</span>` +
+    `<span class="admin-only">${controlHtml}</span></label>`;
+}
+
 function fleetCard(item, openCount) {
-  const dateFields = [
-    ["inspectionAt", "Inspeção"],
-    ["tachographAt", "Tacógrafo"],
-    ["compressorReviewAt", "Compressor"],
-    ["wheelHubReviewAt", "Cubos"]
-  ];
-  if (isTratorFleet(item)) dateFields.push(["revisionAt", "Revisão"]);
-  const badges = dateFields.map(([f, l]) => fleetCardDateBadge(item, f, l)).filter(Boolean).join("");
+  const badges = fleetDateFieldsFor(item).map(([f, l]) => fleetCardDateBadge(item, f, l)).filter(Boolean).join("");
   const statusCls = normalizeText(item.status) === "ativa" ? "ativa" : "outro";
+  // F11: não repetir "X avaria aberta" (a caixa Saúde já tem).
   const metaBits = [];
   if (item.description) metaBits.push(escapeHtml(item.description));
   const marca = item.brand || item.model;
   if (marca) metaBits.push(escapeHtml(marca) + (item.year ? ` ${escapeHtml(String(item.year))}` : ""));
-  const openTag = openCount ? `<span class="fleet-open">${openCount} avaria${openCount > 1 ? "s" : ""} aberta${openCount > 1 ? "s" : ""}</span>` : "";
-  const metaLine = [metaBits.join(" · "), openTag].filter(Boolean).join(" · ");
+  const metaLine = metaBits.join(" · ");
   const partner = item.partnerEquipment ? state.fleet.find((f) => String(f.equipment) === String(item.partnerEquipment)) : null;
   const conjuntoLine = item.partnerEquipment
     ? `<p class="fleet-card__conjunto">🔗 Conjunto com <strong>${escapeHtml(partner ? (partner.plate || "—") : ("Equip. " + item.partnerEquipment))}</strong>${partner ? ` · Equip. ${escapeHtml(partner.equipment || "-")}${partner.description ? ` · ${escapeHtml(partner.description)}` : ""}` : ""}</p>`
@@ -4489,25 +4506,28 @@ function fleetCard(item, openCount) {
       ${badges ? `<div class="fleet-card__badges">${badges}</div>` : ""}
       ${conjuntoLine}
       <div class="fleet-card__controls">
-        <label class="fleet-mini"><span>Motorista</span>${renderFleetDriverCell(item)}</label>
-        <label class="fleet-mini"><span>Oficina preferencial</span>${renderFleetOficinaCell(item)}</label>
-        <label class="fleet-mini"><span>Resp. logística${item.partnerEquipment ? ` <button type="button" class="link-button" data-action="fleet-logisticsresp-conjunto" data-equipment="${escapeAttr(item.equipment)}" title="Aplicar o mesmo responsável ao outro veículo do conjunto">↔ conjunto</button>` : ""}</span>${renderFleetLogisticsCell(item)}</label>
-        <label class="fleet-mini"><span>Conjunto (trator/reboque)</span>${renderFleetPartnerCell(item)}</label>
-        <label class="fleet-mini admin-only"><span>Estado (admin)</span>${renderFleetStatusCell(item)}</label>
+        ${fleetMiniAdmin("Motorista", item.driver, renderFleetDriverCell(item))}
+        ${fleetMiniAdmin("Oficina preferencial", item.preferredWorkshop, renderFleetOficinaCell(item))}
+        ${fleetMiniAdmin("Resp. logística", item.logisticsResp, renderFleetLogisticsCell(item), item.partnerEquipment ? ` <button type="button" class="link-button admin-only" data-action="fleet-logisticsresp-conjunto" data-equipment="${escapeAttr(item.equipment)}" title="Aplicar o mesmo responsável ao outro veículo do conjunto">↔ conjunto</button>` : "")}
+        ${fleetMiniAdmin("Conjunto (trator/reboque)", partner ? (partner.plate || `Equip. ${partner.equipment}`) : "", renderFleetPartnerCell(item))}
+        <label class="fleet-mini admin-only"><span>Estado</span>${renderFleetStatusCell(item)}</label>
       </div>
       <footer class="fleet-card__foot">
-        <button class="icon-button" type="button" data-action="delete-fleet" data-equipment="${escapeAttr(item.equipment)}" title="Remover viatura"><span data-icon="trash"></span></button>
+        <button class="ghost-button admin-only" type="button" data-action="fleet-edit-modal" data-equipment="${escapeAttr(item.equipment)}" title="Editar todos os campos (admin)"><span data-icon="edit"></span><span>Editar</span></button>
+        <button class="icon-button admin-only" type="button" data-action="delete-fleet" data-equipment="${escapeAttr(item.equipment)}" title="Remover viatura"><span data-icon="trash"></span></button>
       </footer>
     </article>`;
 }
 
 function fleetCardDateBadge(item, field, label) {
-  const value = item[field];
+  const value = fleetEffectiveDate(item, field);
+  const fromPartner = field === "compressorReviewAt" && value && value !== item[field];
   if (isFleetNA(value)) return `<span class="fleet-badge fleet-badge--empty">${escapeHtml(label)}: N/A</span>`;
-  if (!value) return "";
+  if (!value) return `<span class="fleet-badge fleet-badge--empty">${escapeHtml(label)}: s/ data</span>`;
   const due = getDueState(value);
   const dot = due.className === "red" ? "🔴" : due.className === "yellow" ? "🟡" : due.className === "green" ? "🟢" : "⚪";
-  return `<span class="fleet-badge fleet-badge--${due.className}" title="${escapeAttr(label)} — ${escapeAttr(formatDate(value))}">${dot} ${escapeHtml(label)} · ${escapeHtml(due.label)}</span>`;
+  // F1: mostra a DATA (não os dias). F2: 🔗 quando o compressor vem do trator do conjunto.
+  return `<span class="fleet-badge fleet-badge--${due.className}" title="${escapeAttr(label)} — ${escapeAttr(due.label)}${fromPartner ? " (do trator do conjunto)" : ""}">${dot} ${escapeHtml(label)} · ${escapeHtml(formatDate(value))}${fromPartner ? " 🔗" : ""}</span>`;
 }
 
 function renderFleetDateCell(item, field, label) {
@@ -4866,6 +4886,19 @@ function isFleetInactive(item) {
   return normalizeText(item && item.status) !== "ativa";
 }
 
+function fleetTypeOptions(selected) {
+  return FLEET_DESCRIPTIONS.map((t) => `<option value="${escapeAttr(t)}"${normalizeText(t) === normalizeText(selected || "") ? " selected" : ""}>${escapeHtml(t)}</option>`).join("");
+}
+
+// Há dados por gravar no modal de viatura? (F18)
+function fleetFormDirty() {
+  const root = document.querySelector("#modal-root");
+  const form = root && (root.querySelector('[data-form="new-fleet"]') || root.querySelector('[data-form="edit-fleet"]'));
+  if (!form) return false;
+  const eq = form.querySelector('[name="equipment"]'), pl = form.querySelector('[name="plate"]');
+  return !!((eq && eq.value.trim()) || (pl && pl.value.trim()));
+}
+
 function openFleetModal() {
   const statuses = fleetStatusList();
   const body = `
@@ -4874,22 +4907,61 @@ function openFleetModal() {
         <label class="field">Equipamento *<input name="equipment" required placeholder="N.º equipamento"></label>
         <label class="field">Matrícula *<input name="plate" required placeholder="AA-00-AA"></label>
       </div>
-      <label class="field field--wide">Descrição *<input name="description" required placeholder="Ex.: Camião basculante"></label>
+      <label class="field field--wide">Tipo de viatura *<select name="description" required>${fleetTypeOptions("")}</select></label>
       <div class="field-row">
-        <label class="field">Marca<input name="brand"></label>
-        <label class="field">Ano<input name="year" type="number" min="1980" max="2100"></label>
+        <label class="field">Marca *<input name="brand" required></label>
+        <label class="field">Ano *<input name="year" type="number" min="1980" max="2100" required></label>
       </div>
       <div class="field-row">
-        <label class="field">Estado<select name="status">${statuses.map((s) => `<option value="${escapeAttr(s)}"${s === "Ativa" ? " selected" : ""}>${escapeHtml(s)}</option>`).join("")}</select></label>
-        <label class="field">Empresa<select name="fleetCompany"><option value=""></option><option value="CPSA">CPSA</option><option value="PTSA">PTSA</option></select></label>
+        <label class="field">Estado *<select name="status" required>${statuses.map((s) => `<option value="${escapeAttr(s)}"${s === "Ativa" ? " selected" : ""}>${escapeHtml(s)}</option>`).join("")}</select></label>
+        <label class="field">Empresa *<select name="fleetCompany" required><option value="">—</option><option value="CPSA">CPSA</option><option value="PTSA">PTSA</option></select></label>
       </div>
-      <label class="field field--wide">Motorista<input name="driver" placeholder="Motorista responsável"></label>
+      <label class="field field--wide">Motorista *<select name="driver" required><option value="">—</option>${driverNameList().map((d) => `<option value="${escapeAttr(d)}">${escapeHtml(d)}</option>`).join("")}</select></label>
+      <p class="dock-form__hint">Todos os campos são obrigatórios (as datas das intervenções periódicas preenchem-se depois na viatura).</p>
       <div class="modal-form__actions">
         <button type="button" class="ghost-button" data-action="close-modal">Cancelar</button>
         <button type="submit" class="primary-button"><span data-icon="plus"></span><span>Criar viatura</span></button>
       </div>
     </form>`;
-  openModal("Adicionar viatura", body);
+  openModal("Adicionar viatura", body, { closeGuard: () => !fleetFormDirty() || window.confirm("Tem dados inseridos.\nQuer sair sem gravar?") });
+}
+
+// F17: editar TODOS os campos de uma viatura numa janela (só ADMIN).
+function openFleetEditModal(equipment) {
+  const item = state.fleet.find((f) => String(f.equipment) === String(equipment));
+  if (!item) return;
+  const statuses = fleetStatusList();
+  const dateField = (name, label) => `<label class="field">${label}<input type="date" name="${name}" value="${escapeAttr(item[name] && !isFleetNA(item[name]) ? item[name] : "")}"></label>`;
+  const towed = isTowedFleetDesc(item.description);
+  const body = `
+    <form class="modal-form" data-form="edit-fleet">
+      <input type="hidden" name="equipment" value="${escapeAttr(item.equipment)}">
+      <div class="field-row">
+        <label class="field">Equipamento<input value="${escapeAttr(item.equipment)}" readonly></label>
+        <label class="field">Matrícula *<input name="plate" value="${escapeAttr(item.plate || "")}" required></label>
+      </div>
+      <label class="field field--wide">Tipo de viatura *<select name="description" required>${fleetTypeOptions(item.description)}</select></label>
+      <div class="field-row">
+        <label class="field">Marca<input name="brand" value="${escapeAttr(item.brand || "")}"></label>
+        <label class="field">Ano<input name="year" type="number" min="1980" max="2100" value="${escapeAttr(item.year || "")}"></label>
+      </div>
+      <div class="field-row">
+        <label class="field">Estado<select name="status">${statuses.map((s) => `<option value="${escapeAttr(s)}"${normalizeText(s) === normalizeText(item.status) ? " selected" : ""}>${escapeHtml(s)}</option>`).join("")}${item.status && !statuses.some((s) => normalizeText(s) === normalizeText(item.status)) ? `<option value="${escapeAttr(item.status)}" selected>${escapeHtml(item.status)}</option>` : ""}</select></label>
+        <label class="field">Empresa<select name="fleetCompany"><option value="">—</option><option value="CPSA"${item.fleetCompany === "CPSA" ? " selected" : ""}>CPSA</option><option value="PTSA"${item.fleetCompany === "PTSA" ? " selected" : ""}>PTSA</option></select></label>
+      </div>
+      <label class="field field--wide">Motorista<select name="driver"><option value="">—</option>${driverNameList().map((d) => `<option value="${escapeAttr(d)}"${normalizeText(d) === normalizeText(item.driver || "") ? " selected" : ""}>${escapeHtml(d)}</option>`).join("")}${item.driver && !driverNameList().some((d) => normalizeText(d) === normalizeText(item.driver)) ? `<option value="${escapeAttr(item.driver)}" selected>${escapeHtml(item.driver)} (atual)</option>` : ""}</select></label>
+      <p class="occ-section__title">Datas de intervenção</p>
+      <div class="field-row">
+        ${dateField("inspectionAt", "Inspeção (IPO)")}
+        ${dateField("compressorReviewAt", "Compressor")}
+        ${towed ? dateField("wheelHubReviewAt", "Cubos de roda") : dateField("tachographAt", "Aferição tacógrafo")}
+      </div>
+      <div class="modal-form__actions">
+        <button type="button" class="ghost-button" data-action="close-modal">Cancelar</button>
+        <button type="submit" class="primary-button"><span data-icon="save"></span><span>Guardar</span></button>
+      </div>
+    </form>`;
+  openModal(`Editar viatura · ${item.plate || item.equipment}`, body, { closeGuard: () => !fleetFormDirty() || window.confirm("Tem dados inseridos.\nQuer sair sem gravar?") });
 }
 
 // Estado numa coluna: texto simples fora do modo admin, dropdown Ativa/Inativa em admin.
@@ -4967,7 +5039,7 @@ async function handleNewFleet(form) {
 
   state.fleet.push(item);
   state.fleet.sort((a, b) => String(a.equipment).localeCompare(String(b.equipment), undefined, { numeric: true }));
-  closeModal();
+  closeModal(true);
   const auditEvent = {
     id: `FROTA-${equipment}-criada-${Date.now()}`,
     breakdownId: "",
@@ -4981,6 +5053,42 @@ async function handleNewFleet(form) {
   state.audit.unshift(auditEvent);
   saveState();
   showToast("Viatura adicionada à frota.");
+  render();
+  await persistRemoteSafely(async () => {
+    await persistFleetRemote(item);
+    await persistAuditRemote(auditEvent);
+  });
+}
+
+// F17: guardar a edição de TODOS os campos de uma viatura (modal admin).
+async function handleEditFleet(form) {
+  if (!requireAdmin()) return;
+  const data = new FormData(form);
+  const item = state.fleet.find((f) => String(f.equipment) === String(data.get("equipment")));
+  if (!item) return;
+  const plateInput = String(data.get("plate") || "").trim();
+  if (plateInput && state.fleet.some((f) => f !== item && normalizePlate(f.plate) === normalizePlate(plateInput))) {
+    showToast(`Já existe outra viatura com a matrícula ${plateInput}.`); return;
+  }
+  const yearValue = Number(data.get("year"));
+  item.plate = plateInput;
+  item.description = String(data.get("description") || "").trim();
+  item.brand = String(data.get("brand") || "").trim();
+  item.year = Number.isFinite(yearValue) && yearValue > 0 ? yearValue : null;
+  item.status = String(data.get("status") || item.status || "Ativa");
+  item.fleetCompany = String(data.get("fleetCompany") || "");
+  item.driver = String(data.get("driver") || "").trim();
+  ["inspectionAt", "tachographAt", "compressorReviewAt", "wheelHubReviewAt"].forEach((f) => {
+    if (data.has(f)) item[f] = emptyToNull(data.get(f));
+  });
+  const auditEvent = {
+    id: `FROTA-${item.equipment}-editada-${Date.now()}`, breakdownId: "", equipment: item.equipment, plate: item.plate,
+    at: new Date().toISOString(), action: "Frota: viatura editada", status: "", note: `${item.plate || "-"} · ${item.description || "-"}`
+  };
+  state.audit.unshift(auditEvent);
+  closeModal(true);
+  saveState();
+  showToast("Viatura atualizada.");
   render();
   await persistRemoteSafely(async () => {
     await persistFleetRemote(item);
@@ -5760,6 +5868,23 @@ const PREVENTIVE_FIELDS = [
 // autopropelida (trator/carros água/cola/grua/rígido/xico) → leva tacógrafo. (ARGOS 07/10 item 22)
 function isTowedFleetDesc(desc) {
   return /basculante|cisterna|estrado|porta|reboque|semi/.test(normalizeText(desc || ""));
+}
+
+// Datas de intervenção a mostrar por tipo de viatura (ARGOS 07/10 F9/F14).
+// Rebocado: Inspeção (IPO) + Compressor + Cubos. Autopropelido: Inspeção + Compressor + Tacógrafo.
+function fleetDateFieldsFor(item) {
+  return isTowedFleetDesc(item && item.description)
+    ? [["inspectionAt", "IPO"], ["compressorReviewAt", "Compressor"], ["wheelHubReviewAt", "Cubos"]]
+    : [["inspectionAt", "IPO"], ["compressorReviewAt", "Compressor"], ["tachographAt", "Tacógrafo"]];
+}
+
+// Data efetiva de um campo: nos reboques, o Compressor vem do trator do conjunto (F2).
+function fleetEffectiveDate(item, field) {
+  if (field === "compressorReviewAt" && isTowedFleetDesc(item && item.description) && item.partnerEquipment) {
+    const p = state.fleet.find((f) => String(f.equipment) === String(item.partnerEquipment));
+    if (p && p.compressorReviewAt && !isFleetNA(p.compressorReviewAt)) return p.compressorReviewAt;
+  }
+  return item[field];
 }
 function preventiveFieldsForPlate(plate) {
   const f = findFleetByPlate(plate);
@@ -7229,10 +7354,20 @@ function getFilteredFleet() {
   const nohyphen = (s) => normalizeText(s).replace(/[-\s]/g, "");
   const search = nohyphen(state.filters.fleetSearch);
   const scope = state.filters.fleetScope || "";
+  const fc = normalizeText(state.filters.fleetFCompany || "");
+  const fr = normalizeText(state.filters.fleetFResp || "");
+  const fd = normalizeText(state.filters.fleetFDriver || "");
+  const fk = state.filters.fleetFKind || "";
   return state.fleet.filter((item) => {
     if (scope === "ativas" && normalizeText(item.status) !== "ativa") return false;
     if (scope === "inspecao-vencida" && !(item.inspectionAt && !isFleetNA(item.inspectionAt) && daysUntil(item.inspectionAt) < 0)) return false;
     if (scope === "tacografo-vencido" && !(item.tachographAt && !isFleetNA(item.tachographAt) && daysUntil(item.tachographAt) < 0)) return false;
+    // F10: filtros Empresa / Resp. LOG / Motorista / Trator-Reboque.
+    if (fc && normalizeText(item.fleetCompany) !== fc) return false;
+    if (fr && normalizeText(item.logisticsResp) !== fr) return false;
+    if (fd && normalizeText(item.driver) !== fd) return false;
+    if (fk === "trator" && isTowedFleetDesc(item.description)) return false;
+    if (fk === "reboque" && !isTowedFleetDesc(item.description)) return false;
     // Pesquisa tolerante ao hífen (BE09MB encontra BE-09-MB e vice-versa).
     const haystack = nohyphen(`${item.equipment} ${item.plate} ${item.description} ${item.brand} ${item.status} ${item.fleetCompany}`);
     return !search || haystack.includes(search);
@@ -7496,7 +7631,7 @@ function resetBrowseFilters() {
   Object.assign(state.filters, {
     search: "", status: [], situation: [], type: [], respLog: [], oficina: [], company: [],
     workshopType: "", semPrevisao: false, occurrenceStale: false, occurrenceStage: "comunicadas",
-    fleetSearch: "", fleetScope: "",
+    fleetSearch: "", fleetScope: "", fleetFCompany: "", fleetFResp: "", fleetFDriver: "", fleetFKind: "",
     auditSearch: "", auditType: "", auditPeriod: "",
     entidadeSearch: "", entidadeCategoria: "",
     ausenciaSearch: "", ausenciaResp: "", vistoriaType: "", vistoriaResult: ""

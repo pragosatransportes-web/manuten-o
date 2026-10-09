@@ -1881,7 +1881,8 @@ table .aus-inp { width: 100%; box-sizing: border-box; }
 }
 
 /* ── Volante da reunião (notas & tarefas) ───────── */
-#meeting-dock { position: fixed; right: 18px; bottom: 18px; z-index: 60; }
+/* Janela de reunião: ao iniciar aparece ao centro do ecrã, maior (ARGOS 07/10 item 39). */
+#meeting-dock { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 60; }
 #meeting-dock:not(.visible) { display: none; }
 
 .dock-bubble {
@@ -1895,7 +1896,7 @@ table .aus-inp { width: 100%; box-sizing: border-box; }
   border-radius: var(--radius-pill); padding: 1px 7px; }
 
 .dock-panel {
-  width: min(380px, calc(100vw - 32px));
+  width: min(620px, calc(100vw - 32px));
   background: var(--surface);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
@@ -1903,9 +1904,10 @@ table .aus-inp { width: 100%; box-sizing: border-box; }
   overflow: hidden;
   display: flex; flex-direction: column;
   resize: both;
-  min-width: 300px; min-height: 240px;
-  max-width: 92vw; max-height: 85vh;
+  min-width: 340px; min-height: 420px;
+  max-width: 94vw; max-height: 88vh;
 }
+.dock-panel .dock-log { flex: 1; max-height: none; }
 .dock-head { cursor: move; }
 body.dock-dragging { user-select: none; }
 .dock-form { flex-direction: column; align-items: stretch; }

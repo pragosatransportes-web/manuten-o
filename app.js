@@ -392,10 +392,13 @@ document.addEventListener("click", async (event) => {
     deleteMeetingEvent("", button.dataset.id);
   }
   if (action === "meeting-event-edit") {
-    editMeetingEventFromReport(button.dataset.mid, button.dataset.id);
+    openMeetingNoteEdit(button.dataset.mid, button.dataset.id);
   }
   if (action === "meeting-event-delete") {
     deleteMeetingEvent(button.dataset.mid, button.dataset.id);
+  }
+  if (action === "meeting-add-task") {
+    addMeetingTaskManual(button.dataset.mid);
   }
   if (action === "meeting-consult") {
     state.meetingView = "consult";
@@ -743,6 +746,11 @@ document.addEventListener("submit", async (event) => {
     event.preventDefault();
     const data = new FormData(form);
     saveMeetingNoteEdit(String(data.get("id") || ""), String(data.get("text") || ""));
+  }
+  if (form.dataset.form === "meeting-note-edit") {
+    event.preventDefault();
+    const data = new FormData(form);
+    saveMeetingNoteEditFull(String(data.get("mid") || ""), String(data.get("eid") || ""), String(data.get("text") || ""), String(data.get("breakdownId") || ""));
   }
   if (form.dataset.form === "new-ausencia") {
     event.preventDefault();
@@ -2279,16 +2287,21 @@ async function deleteMeeting(id) {
 async function closeMeetingById(id) {
   const m = findMeetingById(id);
   if (!m || m.endedAt) return;
-  if (!window.confirm("Encerrar esta reunião? Vai ser gerado o relatório com o resumo das atualizações.")) return;
+  if (!window.confirm("Encerrar esta reunião? Vai ser gerado o relatório e as notas por viatura entram nas ocorrências.")) return;
   m.endedAt = new Date().toISOString();
   m.durationMin = Math.max(1, Math.round((new Date(m.endedAt) - new Date(m.startedAt)) / 60000));
   if (state.activeMeetingId === m.id) state.activeMeetingId = "";
   state.selectedMeetingId = m.id;
   state.meetingView = "report";
+  const flushed = flushMeetingNotesToOccurrences(m);
   saveState();
   showToast(`Reunião encerrada (${m.durationMin} min).`);
   render();
-  await persistRemoteSafely(() => persistMeetingRemote(m));
+  await persistRemoteSafely(async () => {
+    await persistMeetingRemote(m);
+    for (const bd of flushed.touched) await persistBreakdownRemote(bd);
+    for (const a of flushed.audits) await persistAuditRemote(a);
+  });
 }
 
 function generateMeetingId() {
@@ -2323,16 +2336,21 @@ function openMeeting() {
 async function closeMeeting() {
   const meeting = getActiveMeeting();
   if (!meeting) return;
-  if (!window.confirm("Encerrar a reunião? Vai ser gerado o relatório com o resumo das atualizações.")) return;
+  if (!window.confirm("Encerrar a reunião? Vai ser gerado o relatório e as notas por viatura entram nas ocorrências.")) return;
   meeting.endedAt = new Date().toISOString();
   meeting.durationMin = Math.max(1, Math.round((new Date(meeting.endedAt) - new Date(meeting.startedAt)) / 60000));
   state.activeMeetingId = "";
   state.selectedMeetingId = meeting.id;
   state.meetingView = "report";
+  const flushed = flushMeetingNotesToOccurrences(meeting);
   saveState();
   showToast(`Reunião encerrada (${meeting.durationMin} min).`);
   render();
-  await persistRemoteSafely(() => persistMeetingRemote(meeting));
+  await persistRemoteSafely(async () => {
+    await persistMeetingRemote(meeting);
+    for (const bd of flushed.touched) await persistBreakdownRemote(bd);
+    for (const a of flushed.audits) await persistAuditRemote(a);
+  });
 }
 
 // Regista uma ação na reunião a decorrer (se houver). type: "new" | "update" | "close" | "reopen"
@@ -2358,7 +2376,11 @@ function dockOccurrenceOptions(selectedId) {
     .filter((b) => b.status !== "Concluido")
     .slice()
     .sort((a, b) => (a.plate || "").localeCompare(b.plate || "", "pt", { numeric: true }))
-    .map((b) => `<option value="${escapeAttr(b.id)}"${String(selectedId) === String(b.id) ? " selected" : ""}>${escapeHtml(`${b.plate || "-"} · ${b.occurrenceNumber || b.interventionType || "ocorrência"}`)}</option>`)
+    .map((b) => {
+      const avaria = (b.type || b.description || "").trim();
+      const label = `${b.plate || "-"} · ${b.occurrenceNumber || b.interventionType || "ocorrência"}${avaria ? ` — ${avaria}` : ""}`;
+      return `<option value="${escapeAttr(b.id)}"${String(selectedId) === String(b.id) ? " selected" : ""}>${escapeHtml(label)}</option>`;
+    })
     .join("");
 }
 
@@ -2384,7 +2406,7 @@ function updateMeetingDock() {
         <button class="dock-min" type="button" data-action="dock-toggle" title="Minimizar">–</button>
       </div>
       <div class="dock-log" id="dock-log">
-        ${entries.length ? entries.map((e) => {
+        ${entries.length ? entries.slice().reverse().map((e) => {
           if (state.dockEditId === e.id) {
             return `
           <form class="dock-item dock-item--edit" data-form="dock-edit">
@@ -2423,7 +2445,7 @@ function updateMeetingDock() {
           <input id="dock-input" name="text" placeholder="Escrever…" autocomplete="off" required>
           <button class="dock-send" type="submit">Adicionar</button>
         </div>
-        <p class="dock-form__hint">Com viatura selecionada, a nota entra no histórico dessa ocorrência.</p>
+        <p class="dock-form__hint">Com viatura selecionada, a nota entra no histórico dessa ocorrência <strong>ao fechar a reunião</strong>.</p>
       </form>
     </div>`;
   const editInput = dock.querySelector(".dock-edit-input");
@@ -2432,7 +2454,7 @@ function updateMeetingDock() {
     editInput.setSelectionRange(editInput.value.length, editInput.value.length);
   } else {
     const log = document.querySelector("#dock-log");
-    if (log) log.scrollTop = log.scrollHeight;
+    if (log) log.scrollTop = 0; // item 41: mais recentes em cima
   }
 }
 
@@ -2454,21 +2476,29 @@ function addMeetingNote(type, text, breakdownId) {
     plate: bd ? bd.plate : "",
     status: bd ? bd.status : ""
   });
-  // Nota associada a uma viatura → entra também no histórico da ocorrência (per-viatura, sem duplicar).
-  let auditEvent = null;
-  if (bd) {
-    appendHistory(bd, bd.status, `[Reunião] ${clean}`, todayISO());
-    auditEvent = logAudit(bd, "Reunião", clean);
-  }
+  // ITEM 42: a nota NÃO entra já na ocorrência — só é aplicada ao histórico quando a reunião é fechada.
   saveState();
   updateMeetingDock();
-  if (bd) { render(); refreshDetailModal(); }
   document.querySelector("#dock-input")?.focus();
-  showToast(bd ? `Nota no histórico de ${bd.plate || bd.equipment}.` : (state.dockNoteType === "task" ? "Tarefa adicionada." : "Nota adicionada."));
-  persistRemoteSafely(async () => {
-    await persistMeetingRemote(m);
-    if (bd) { await persistBreakdownRemote(bd); await persistAuditRemote(auditEvent); }
+  showToast(bd ? `Nota para ${bd.plate || bd.equipment} (entra na ocorrência ao fechar a reunião).` : (state.dockNoteType === "task" ? "Tarefa adicionada." : "Nota adicionada."));
+  persistRemoteSafely(async () => { await persistMeetingRemote(m); });
+}
+
+// ITEM 42: ao fechar a reunião, aplica as notas/tarefas com viatura ao histórico das ocorrências.
+function flushMeetingNotesToOccurrences(m) {
+  const touched = new Map();
+  const audits = [];
+  const date = (m.endedAt || "").slice(0, 10) || todayISO();
+  (m.events || []).forEach((e) => {
+    if ((e.type === "note" || e.type === "task") && e.breakdownId && !e.occLine) {
+      const bd = state.breakdowns.find((b) => String(b.id) === String(e.breakdownId));
+      if (!bd) return;
+      e.occLine = appendHistory(bd, bd.status, `[Reunião] ${e.summary}`, date);
+      audits.push(logAudit(bd, "Reunião", e.summary));
+      touched.set(String(bd.id), bd);
+    }
   });
+  return { touched: [...touched.values()], audits };
 }
 
 // Dock arrastável pela barra de título (janela de reunião movível — FASE2 update).
@@ -2480,6 +2510,7 @@ function addMeetingNote(type, text, breakdownId) {
     dockEl = document.querySelector("#meeting-dock");
     if (!dockEl) return;
     const rect = dockEl.getBoundingClientRect();
+    dockEl.style.transform = "none"; // limpa o centramento inicial ao começar a arrastar
     dockEl.style.left = rect.left + "px";
     dockEl.style.top = rect.top + "px";
     dockEl.style.right = "auto";
@@ -2542,30 +2573,95 @@ function deleteMeetingEvent(meetingId, eventId) {
   const label = e.type === "task" ? "esta tarefa" : e.type === "note" ? "esta nota" : "este registo";
   const extra = isLog ? "\n\n(Remove apenas o registo do relatório; a avaria em si não é afetada.)" : "";
   if (!window.confirm(`Eliminar ${label}?${extra}`)) return;
+  // Item 45: se a reunião já estava fechada e a nota foi aplicada à ocorrência, remove-a de lá também.
+  let touchedBd = null;
+  if (m.endedAt && e.occLine && e.breakdownId) {
+    touchedBd = state.breakdowns.find((b) => String(b.id) === String(e.breakdownId)) || null;
+    if (touchedBd) removeHistoryLine(touchedBd, e.occLine);
+  }
   m.events = (m.events || []).filter((x) => x.id !== eventId);
   if (state.dockEditId === eventId) state.dockEditId = "";
   saveState();
   updateMeetingDock();
   if (state.currentView === "meeting" && state.meetingView === "report") render();
   showToast("Eliminado.");
+  persistRemoteSafely(async () => {
+    await persistMeetingRemote(m);
+    if (touchedBd) await persistBreakdownRemote(touchedBd);
+  });
+}
+
+// Adiciona uma tarefa manualmente ao relatório/reunião (item 48).
+function addMeetingTaskManual(meetingId) {
+  const m = findMeetingById(meetingId);
+  if (!m) return;
+  const text = window.prompt("Nova tarefa:");
+  const clean = String(text || "").trim();
+  if (!clean) return;
+  m.events.push({ id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, at: new Date().toISOString(), type: "task", summary: clean, done: false, breakdownId: "", equipment: "", plate: "", status: "" });
+  saveState();
+  render();
+  showToast("Tarefa adicionada.");
   persistRemoteSafely(() => persistMeetingRemote(m));
 }
 
-// Edita o texto de um registo a partir do relatório (reunião a decorrer ou encerrada).
-function editMeetingEventFromReport(meetingId, eventId) {
+// Edita uma nota/tarefa do relatório: permite alterar texto E matrícula (itens 43/44).
+function openMeetingNoteEdit(meetingId, eventId) {
   const m = findMeetingById(meetingId);
   if (!m) return;
   const e = (m.events || []).find((x) => x.id === eventId);
   if (!e) return;
-  const next = window.prompt("Editar texto:", e.summary || "");
-  if (next === null) return;
-  const clean = String(next).trim();
+  const body = `
+    <form class="modal-form" data-form="meeting-note-edit">
+      <input type="hidden" name="mid" value="${escapeAttr(meetingId)}">
+      <input type="hidden" name="eid" value="${escapeAttr(eventId)}">
+      <label class="field field--wide">Texto
+        <textarea name="text" rows="3" required>${escapeHtml(e.summary || "")}</textarea>
+      </label>
+      <label class="field field--wide">Viatura / ocorrência
+        <select name="breakdownId">
+          <option value="">— geral (sem viatura) —</option>
+          ${dockOccurrenceOptions(e.breakdownId)}
+        </select>
+      </label>
+      ${m.endedAt && e.occLine ? `<p class="dock-form__hint">A reunião está fechada: a alteração é refletida na ocorrência com nota <strong>[Reunião-editada]</strong>.</p>` : ""}
+      <div class="modal-form__actions">
+        <button type="button" class="ghost-button" data-action="close-modal">Cancelar</button>
+        <button type="submit" class="primary-button">Guardar</button>
+      </div>
+    </form>`;
+  openModal("Editar nota / tarefa", body);
+}
+
+function saveMeetingNoteEditFull(mid, eid, text, breakdownId) {
+  const m = findMeetingById(mid);
+  if (!m) return;
+  const e = (m.events || []).find((x) => x.id === eid);
+  if (!e) return;
+  const clean = String(text || "").trim();
   if (!clean) { showToast("O texto não pode ficar vazio."); return; }
+  const bd = breakdownId ? state.breakdowns.find((b) => String(b.id) === String(breakdownId)) : null;
+  const touched = [];
+  // Reunião já fechada e nota já aplicada → sincroniza a ocorrência (itens 44).
+  if (m.endedAt && e.occLine) {
+    const oldBd = e.breakdownId ? state.breakdowns.find((b) => String(b.id) === String(e.breakdownId)) : null;
+    if (oldBd) { removeHistoryLine(oldBd, e.occLine); touched.push(oldBd); }
+    e.occLine = "";
+    if (bd) { e.occLine = appendHistory(bd, bd.status, `[Reunião-editada] ${clean}`, (m.endedAt || "").slice(0, 10) || todayISO()); if (!touched.includes(bd)) touched.push(bd); }
+  }
   e.summary = clean;
+  e.breakdownId = bd ? bd.id : "";
+  e.equipment = bd ? bd.equipment : "";
+  e.plate = bd ? bd.plate : "";
+  e.status = bd ? bd.status : "";
+  closeModal();
   saveState();
   render();
   showToast("Atualizado.");
-  persistRemoteSafely(() => persistMeetingRemote(m));
+  persistRemoteSafely(async () => {
+    await persistMeetingRemote(m);
+    for (const b of touched) await persistBreakdownRemote(b);
+  });
 }
 
 // Navegação em 2 níveis: 5 áreas, cada uma com as suas secções (redesign ARGOS).
@@ -3002,34 +3098,39 @@ function meetingEventLabel(type) {
     : "Atualização";
 }
 
+// Link de criação de evento no Outlook (web) para uma tarefa (item 48).
+function outlookEventUrl(subject, body) {
+  const params = new URLSearchParams({
+    path: "/calendar/action/compose", rru: "addevent",
+    subject: subject || "Tarefa (reunião)", body: body || ""
+  });
+  return `https://outlook.office.com/calendar/0/deeplink/compose?${params.toString()}`;
+}
+
 function renderMeetingReport() {
   const m = state.meetings.find((x) => String(x.id) === String(state.selectedMeetingId));
   if (!m) return `<div class="panel"><p class="empty-state">Reunião não encontrada.</p></div>`;
   const ev = m.events || [];
-  const novas = ev.filter((e) => e.type === "new");
-  const updates = ev.filter((e) => e.type === "update" || e.type === "close" || e.type === "reopen");
   const tarefas = ev.filter((e) => e.type === "task");
   const notas = ev.filter((e) => e.type === "note");
-  const evActions = (e) => `
-      <span class="timeline-actions">
+  const evActions = (e, extra = "") => `
+      <span class="timeline-actions">${extra}
         <button class="dock-mini" type="button" data-action="meeting-event-edit" data-mid="${escapeAttr(m.id)}" data-id="${escapeAttr(e.id)}" title="Editar">✏️</button>
         <button class="dock-mini" type="button" data-action="meeting-event-delete" data-mid="${escapeAttr(m.id)}" data-id="${escapeAttr(e.id)}" title="Eliminar">🗑️</button>
       </span>`;
-  const rowsHtml = (arr) => arr.length ? arr.map((e) => `
-    <article class="timeline-item">
-      <time>${formatTimeOnly(e.at)} · Equip. ${escapeHtml(String(e.equipment || "-"))} · ${escapeHtml(e.plate || "-")} · ${escapeHtml(meetingEventLabel(e.type))}</time>
-      <p>${escapeHtml(e.summary || "-")}</p>
-      ${evActions(e)}
-    </article>`).join("") : '<p class="empty-state">Sem registos.</p>';
   const evVehicle = (e) => (e.plate || e.equipment)
     ? ` · <span class="timeline-veh">🚚 ${escapeHtml(e.plate || "")}${e.equipment ? ` · Equip. ${escapeHtml(String(e.equipment))}` : ""}</span>`
     : "";
-  const noteRows = (arr) => arr.length ? arr.map((e) => `
+  // Item 41: mais recentes em cima.
+  const noteRows = (arr, isTask) => arr.length ? arr.slice().reverse().map((e) => {
+    const outlook = isTask ? `<a class="dock-mini" href="${escapeAttr(outlookEventUrl(e.summary, `Tarefa da reunião de ${formatDate((m.startedAt || "").slice(0, 10))}${e.plate ? ` · ${e.plate}` : ""}`))}" target="_blank" rel="noopener" title="Criar evento no Outlook">📅</a>` : "";
+    return `
     <article class="timeline-item">
-      <time>${formatTimeOnly(e.at)}${e.type === "task" ? (e.done ? " · ✅ concluída" : " · ⬜ pendente") : ""}${evVehicle(e)}</time>
+      <time>${formatTimeOnly(e.at)}${isTask ? (e.done ? " · ✅ concluída" : " · ⬜ pendente") : ""}${evVehicle(e)}</time>
       <p>${escapeHtml(e.summary || "-")}</p>
-      ${evActions(e)}
-    </article>`).join("") : '<p class="empty-state">Sem registos.</p>';
+      ${evActions(e, outlook)}
+    </article>`;
+  }).join("") : '<p class="empty-state">Sem registos.</p>';
 
   return `
     <section class="panel">
@@ -3044,19 +3145,16 @@ function renderMeetingReport() {
       </div>
       <div class="metrics-grid" style="padding:14px 16px">
         <article class="metric-card"><span>Duração</span><strong>${m.endedAt ? `${m.durationMin}m` : "—"}</strong><em>tempo da reunião</em></article>
-        <article class="metric-card"><span>Novas avarias</span><strong>${novas.length}</strong><em>criadas na reunião</em></article>
-        <article class="metric-card"><span>Atualizações</span><strong>${updates.length}</strong><em>em avarias abertas</em></article>
-        <article class="metric-card"><span>Tarefas</span><strong>${tarefas.length}</strong><em>${tarefas.filter((t) => !t.done).length} pendentes</em></article>
         <article class="metric-card"><span>Notas</span><strong>${notas.length}</strong><em>observações</em></article>
+        <article class="metric-card"><span>Tarefas</span><strong>${tarefas.length}</strong><em>${tarefas.filter((t) => !t.done).length} pendentes</em></article>
       </div>
-      <div class="panel-header"><div><h3>Novas avarias (${novas.length})</h3></div></div>
-      <div class="timeline" style="padding:0 16px 8px">${rowsHtml(novas)}</div>
-      <div class="panel-header"><div><h3>Atualizações em avarias abertas (${updates.length})</h3></div></div>
-      <div class="timeline" style="padding:0 16px 8px">${rowsHtml(updates)}</div>
-      <div class="panel-header"><div><h3>Tarefas (${tarefas.length})</h3></div></div>
-      <div class="timeline" style="padding:0 16px 8px">${noteRows(tarefas)}</div>
       <div class="panel-header"><div><h3>Notas / observações (${notas.length})</h3></div></div>
-      <div class="timeline" style="padding:0 16px 16px">${noteRows(notas)}</div>
+      <div class="timeline" style="padding:0 16px 8px">${noteRows(notas, false)}</div>
+      <div class="panel-header">
+        <div><h3>Tarefas (${tarefas.length})</h3></div>
+        <div class="button-row"><button class="btn-sec" type="button" data-action="meeting-add-task" data-mid="${escapeAttr(m.id)}">＋ Tarefa</button></div>
+      </div>
+      <div class="timeline" style="padding:0 16px 16px">${noteRows(tarefas, true)}</div>
     </section>`;
 }
 
@@ -5271,6 +5369,20 @@ function appendHistory(breakdown, status, note, date) {
   breakdown.historyNotes = [breakdown.historyNotes, line].filter(Boolean).join("\n");
   breakdown.lastNote = cleanNote;
   breakdown.lastNoteAt = date;
+  return line;
+}
+
+// Remove uma linha exata do histórico de uma ocorrência (usado ao remover/editar notas de reunião).
+function removeHistoryLine(breakdown, line) {
+  if (!breakdown || !line) return;
+  const lines = String(breakdown.historyNotes || "").split(/\r?\n/);
+  const idx = lines.indexOf(line);
+  if (idx === -1) return;
+  lines.splice(idx, 1);
+  breakdown.historyNotes = lines.filter(Boolean).join("\n");
+  const last = parseHistory(breakdown.historyNotes)[0];
+  breakdown.lastNote = last ? last.note : "";
+  breakdown.lastNoteAt = last ? last.date : "";
 }
 
 function logAudit(breakdown, action, note) {

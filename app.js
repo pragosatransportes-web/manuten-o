@@ -616,6 +616,8 @@ document.addEventListener("click", async (event) => {
   if (action === "gantt-prev") { ganttShift(-1); saveState(); render(); }
   if (action === "gantt-next") { ganttShift(1); saveState(); render(); }
   if (action === "gantt-today") { state.ganttAnchor = todayISO(); saveState(); render(); }
+  if (action === "plan-filter") { state.filters.planFilter = button.dataset.filter || ""; saveState(); render(); }
+  if (action === "plan-export-pdf") { exportPlanPdf(); }
   if (action === "gantt-goto-day") {
     state.ganttAnchor = button.dataset.date || todayISO();
     state.ganttMode = "day";
@@ -889,7 +891,8 @@ function makeInitialState() {
       ausenciaResp: "",
       entidadeSearch: "",
       entidadeCategoria: "",
-      occurrenceStage: "comunicadas"
+      occurrenceStage: "comunicadas",
+      planFilter: ""
     }
   };
 }
@@ -3719,11 +3722,32 @@ function ganttSpanDays(b) {
   while (cur <= exit && i < 120) { days.push(cur); cur = isoAddDays(cur, 1); i++; }
   return days;
 }
+// Intervalo de datas de uma intervenção, por estado da avaria (M4):
+// Agendada (só com prev. entrada) · Em intervenção · Concluída. Comunicada não entra.
+function interventionRange(b) {
+  const ea = occEstadoAvaria(b);
+  const d = (v) => (v && !isFleetNA(v)) ? String(v).slice(0, 10) : "";
+  if (ea === "Agendada") {
+    const start = d(b.expectedEntryAt);
+    return start ? { start, end: d(b.expectedExitAt) || start, estado: ea } : null;
+  }
+  if (ea === "Em intervenção") {
+    const start = d(b.workshopEntryAt) || d(b.expectedEntryAt) || d(b.reportedAt);
+    return start ? { start, end: d(b.workshopExitAt) || d(b.expectedExitAt) || todayISO(), estado: ea } : null;
+  }
+  if (ea === "Concluída") {
+    const start = d(b.workshopEntryAt) || d(b.expectedEntryAt) || d(b.reportedAt);
+    return start ? { start, end: d(b.workshopExitAt) || d(b.lastNoteAt) || start, estado: ea } : null;
+  }
+  return null;
+}
 function ganttActiveByDate() {
   const map = {};
   state.breakdowns.forEach((b) => {
-    if (b.status === "Concluido") return;
-    ganttSpanDays(b).forEach((k) => { (map[k] = map[k] || []).push(b); });
+    const r = interventionRange(b);
+    if (!r) return;
+    let cur = r.start, i = 0;
+    while (cur <= r.end && i < 120) { (map[cur] = map[cur] || []).push(b); cur = isoAddDays(cur, 1); i++; }
   });
   return map;
 }
@@ -3737,15 +3761,13 @@ function isoMondayOf(iso) {
   const dow = (d.getDay() + 6) % 7;
   return isoAddDays(iso, -dow);
 }
-function ganttStatusClass(status) {
-  const s = normalizeText(status);
-  if (s.includes("agendado")) return "gs-agendado";
-  if (s.includes("pode circular")) return "gs-circular";
-  if (s === "parado") return "gs-parado";
-  return "gs-outro";
+// Cor por Estado da avaria (M4): Agendada · Em curso · Concluída.
+function ganttEstadoClass(b) {
+  const ea = occEstadoAvaria(b);
+  return ea === "Concluída" ? "ge-concluida" : ea === "Em intervenção" ? "ge-curso" : "ge-agendada";
 }
 function ganttChip(b) {
-  return `<button class="gantt-chip ${ganttStatusClass(b.status)}" type="button" data-action="select-breakdown" data-id="${escapeAttr(b.id)}" title="${escapeAttr(`${b.occurrenceNumber || ""} · ${b.interventionType || ""} · ${b.status || ""} · ${b.description || ""}`)}">
+  return `<button class="gantt-chip ${ganttEstadoClass(b)}" type="button" data-action="select-breakdown" data-id="${escapeAttr(b.id)}" title="${escapeAttr(`${b.occurrenceNumber || ""} · ${occEstadoAvaria(b)} · ${b.description || ""}`)}">
     <strong>${escapeHtml(b.plate || b.equipment || "-")}</strong>
     <span>${escapeHtml(b.occurrenceNumber || b.interventionType || "")}</span>
     ${priorityBadge(b.priority)}
@@ -3816,28 +3838,20 @@ function renderGantt() {
           const out = d.slice(0, 7) !== monthPrefix;
           return `<div class="gantt-cell ${out ? "is-out" : ""} ${d === today ? "is-today" : ""}">
             <button class="gantt-cell__day" type="button" data-action="gantt-goto-day" data-date="${d}">${d.slice(8, 10)}</button>
-            ${list.slice(0, 3).map((b) => `<button class="gantt-mini ${ganttStatusClass(b.status)}" type="button" data-action="select-breakdown" data-id="${escapeAttr(b.id)}" title="${escapeAttr(`${b.plate || ""} · ${b.occurrenceNumber || ""}`)}">${escapeHtml(b.plate || b.equipment || "-")}</button>`).join("")}
+            ${list.slice(0, 3).map((b) => `<button class="gantt-mini ${ganttEstadoClass(b)}" type="button" data-action="select-breakdown" data-id="${escapeAttr(b.id)}" title="${escapeAttr(`${b.plate || ""} · ${b.occurrenceNumber || ""} · ${occEstadoAvaria(b)}`)}">${escapeHtml(b.plate || b.equipment || "-")}</button>`).join("")}
             ${list.length > 3 ? `<span class="gantt-more">+${list.length - 3}</span>` : ""}
           </div>`;
         }).join("")}</div>`).join("")}
       </div>`;
   }
 
-  const prevAll = getFleetDateAlerts()
-    .filter((a) => Number.isFinite(a.days) && a.days >= 0 && a.days <= 90)
-    .sort((a, b) => (a.plate || "").localeCompare(b.plate || "", "pt", { numeric: true }));
-  const isPrevTrator = (item) => {
-    const f = state.fleet.find((x) => String(x.equipment) === String(item.equipment));
-    return f ? isTratorFleet(f) : false;
-  };
-  const prevTr = prevAll.filter(isPrevTrator);
-  const prevRb = prevAll.filter((x) => !isPrevTrator(x));
-  const prevRow = (item) => `
-    <article class="deadline-row">
-      <div><strong>${escapeHtml(item.plate || "-")} · Equip. ${escapeHtml(item.equipment)}</strong><span>${escapeHtml(item.label)} · ${escapeHtml(formatDate(item.date))}</span></div>
-      ${renderDueBadge(item.date)}
-    </article>`;
-  const prevBlock = (title, list) => `<h3 class="deadline-subhead">${escapeHtml(title)} (${list.length})</h3>${list.length ? list.map(prevRow).join("") : '<p class="empty-state">Sem preventivas nos próximos 3 meses.</p>'}`;
+  // M5: Próximas intervenções no período visível do calendário, agrupadas por Resp. LOG.
+  const planFilter = state.filters.planFilter || "";
+  const range = planVisibleRange(mode, anchor);
+  const planGroups = groupPlanByResp(planInterventions(range.start, range.end, planFilter));
+  const planCount = planGroups.reduce((n, g) => n + g.items.length, 0);
+  const PLAN_FILTERS = [["", "Todas"], ["agendada", "Agendadas"], ["curso", "Em curso"], ["concluida", "Concluídas"]];
+  const planChips = PLAN_FILTERS.map(([v, l]) => `<button type="button" class="chip-filter${planFilter === v ? " active" : ""}" data-action="plan-filter" data-filter="${v}">${escapeHtml(l)}</button>`).join("");
 
   return `
     <section class="page-grid">
@@ -3846,7 +3860,7 @@ function renderGantt() {
           <div>
             <p class="eyebrow">Manutenção</p>
             <h2>Planeamento</h2>
-            <p>Intervenções em curso e agendadas (por data de entrada prevista ou de abertura).</p>
+            <p>Intervenções agendadas, em curso e concluídas (por data de entrada prevista/oficina).</p>
           </div>
           <div class="gantt-controls">
             <div class="chip-filters">${modeTabs}</div>
@@ -3858,16 +3872,85 @@ function renderGantt() {
           </div>
         </div>
         <div class="gantt-title">${escapeHtml(title)}</div>
+        <div class="gantt-legend">
+          <span><i class="ge-dot ge-agendada"></i> Agendada</span>
+          <span><i class="ge-dot ge-curso"></i> Em curso</span>
+          <span><i class="ge-dot ge-concluida"></i> Concluída</span>
+        </div>
         ${bodyHtml}
       </div>
       <div class="panel">
-        <div class="panel-header"><div><p class="eyebrow">Frota</p><h2>Próximas preventivas</h2><p>Inspeções, tacógrafos, revisões e aferições nos próximos 3 meses.</p></div></div>
+        <div class="panel-header">
+          <div><p class="eyebrow">Manutenção</p><h2>Próximas intervenções</h2><p>${planCount} no período · ${escapeHtml(formatDate(range.start))} – ${escapeHtml(formatDate(range.end))}</p></div>
+          <div class="button-row"><button class="ghost-button" type="button" data-action="plan-export-pdf"><span data-icon="download"></span><span>PDF</span></button></div>
+        </div>
+        <div class="chip-filters" style="padding:0 16px 6px">${planChips}</div>
         <div class="deadline-list">
-          ${prevBlock("Tratores", prevTr)}
-          ${prevBlock("Reboques e outros", prevRb)}
+          ${planGroups.length ? planGroups.map((g) => `<h3 class="deadline-subhead">👤 ${escapeHtml(g.resp)} (${g.items.length})</h3>${g.items.map(planRow).join("")}`).join("") : '<p class="empty-state">Sem intervenções no período para este filtro.</p>'}
         </div>
       </div>
     </section>`;
+}
+
+function planVisibleRange(mode, anchor) {
+  if (mode === "day") return { start: anchor, end: anchor };
+  if (mode === "week") { const mon = isoMondayOf(anchor); return { start: mon, end: isoAddDays(mon, 5) }; }
+  const [y, m] = anchor.split("-").map(Number);
+  const last = new Date(y, m, 0).getDate();
+  const p = (n) => String(n).padStart(2, "0");
+  return { start: `${y}-${p(m)}-01`, end: `${y}-${p(m)}-${p(last)}` };
+}
+function planInterventions(start, end, filter) {
+  const estadoOf = { agendada: "Agendada", curso: "Em intervenção", concluida: "Concluída" };
+  const want = estadoOf[filter] || "";
+  return state.breakdowns
+    .map((b) => ({ b, r: interventionRange(b) }))
+    .filter((x) => x.r && x.r.start <= end && x.r.end >= start && (!want || x.r.estado === want))
+    .sort((a, b) => String(a.r.start).localeCompare(String(b.r.start)) || (a.b.plate || "").localeCompare(b.b.plate || "", "pt", { numeric: true }))
+    .map((x) => x.b);
+}
+function groupPlanByResp(list) {
+  const map = new Map(); const order = [];
+  list.forEach((b) => {
+    const resp = breakdownResp(b) || RESP_NENHUM;
+    if (!map.has(resp)) { map.set(resp, []); order.push(resp); }
+    map.get(resp).push(b);
+  });
+  order.sort((a, b) => a === RESP_NENHUM ? 1 : b === RESP_NENHUM ? -1 : a.localeCompare(b, "pt"));
+  return order.map((resp) => ({ resp, items: map.get(resp) }));
+}
+function planDatesText(b) {
+  const ea = occEstadoAvaria(b);
+  const d = (v) => (v && !isFleetNA(v)) ? formatDate(v) : "—";
+  if (ea === "Agendada") return `Entrada prev.: ${d(b.expectedEntryAt)} · Saída: ${d(b.expectedExitAt)}`;
+  if (ea === "Em intervenção") return `Entrada: ${d(b.workshopEntryAt)} · Saída: ${d(b.workshopExitAt)}`;
+  return `Fecho: ${d(b.workshopExitAt || b.lastNoteAt)}`;
+}
+function planRow(b) {
+  return `<article class="deadline-row plan-row" data-action="select-breakdown" data-id="${escapeAttr(b.id)}">
+    <div class="plan-row__main">
+      <strong>${escapeHtml(b.plate || "-")} · ${escapeHtml(b.occurrenceNumber || "")}</strong>
+      <span>🔧 ${escapeHtml(b.workshop || b.workshopType || "sem oficina")} · ${escapeHtml(planDatesText(b))}</span>
+    </div>
+    <div class="plan-row__tags">${priorityBadge(b.priority)} ${estadoAvariaBadge(b)}</div>
+  </article>`;
+}
+function exportPlanPdf() {
+  const mode = state.ganttMode || "week";
+  const range = planVisibleRange(mode, ganttAnchorISO());
+  const planFilter = state.filters.planFilter || "";
+  const groups = groupPlanByResp(planInterventions(range.start, range.end, planFilter));
+  const labelF = { "": "Todas", agendada: "Agendadas", curso: "Em curso", concluida: "Concluídas" }[planFilter] || "Todas";
+  const body = groups.map((g) => `<h3>${escapeHtml(g.resp)} (${g.items.length})</h3>
+    <table><thead><tr><th>Matrícula</th><th>Ocorrência</th><th>Estado</th><th>Fornecedor</th><th>Datas</th><th>Prioridade</th></tr></thead>
+    <tbody>${g.items.map((b) => `<tr><td>${escapeHtml(b.plate || "-")}</td><td>${escapeHtml(b.occurrenceNumber || "")}</td><td>${escapeHtml(occEstadoAvaria(b))}</td><td>${escapeHtml(b.workshop || b.workshopType || "-")}</td><td>${escapeHtml(planDatesText(b).replace(/ · /g, " | "))}</td><td>${escapeHtml(b.priority || "-")}</td></tr>`).join("")}</tbody></table>`).join("");
+  const html = `<!doctype html><html lang="pt"><head><meta charset="utf-8"><title>Próximas intervenções</title>
+    <style>body{font-family:Arial,sans-serif;padding:20px;color:#111827}h1{font-size:18px;margin:0 0 4px}h3{margin:16px 0 6px;color:#0f766e}p.sub{color:#6b7280;margin:0 0 12px}table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px}th,td{border:1px solid #cbd5e1;padding:5px 7px;text-align:left}th{background:#e8f3f1}</style></head>
+    <body><h1>Próximas intervenções — ${escapeHtml(labelF)}</h1><p class="sub">${escapeHtml(formatDate(range.start))} a ${escapeHtml(formatDate(range.end))} · gerado ${new Date().toLocaleString("pt-PT")}</p>${body || "<p>Sem intervenções no período.</p>"}</body></html>`;
+  const w = window.open("", "_blank");
+  if (!w) { showToast("Permita popups para exportar o PDF."); return; }
+  w.document.write(html); w.document.close(); w.focus();
+  setTimeout(() => { try { w.print(); } catch (e) {} }, 350);
 }
 
 function renderNewBreakdown() {

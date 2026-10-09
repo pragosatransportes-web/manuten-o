@@ -499,6 +499,16 @@ document.addEventListener("click", async (event) => {
     saveState();
     render();
   }
+  if (action === "kpi-period") {
+    state.kpiPeriod = button.dataset.period || "month";
+    saveState();
+    render();
+  }
+  if (action === "kpi-year-prev" || action === "kpi-year-next") {
+    state.kpiYear = (state.kpiYear || new Date().getFullYear()) + (action === "kpi-year-next" ? 1 : -1);
+    saveState();
+    render();
+  }
   if (action === "ausencia-cell") {
     openAusenciaCellDetail(button.dataset.driver || "", Number(button.dataset.month));
   }
@@ -832,6 +842,8 @@ function makeInitialState() {
     ausenciaMonth: currentMonthISO(),
     ausenciaViewMode: "year",
     ausenciaYear: new Date().getFullYear(),
+    kpiPeriod: "month",
+    kpiYear: new Date().getFullYear(),
     ausenciaPaint: { driver: "", type: ABSENCE_TYPES[0], days: {} },
     breakdowns,
     snapshots: seed.snapshots || [],
@@ -2667,7 +2679,7 @@ function saveMeetingNoteEditFull(mid, eid, text, breakdownId) {
 // Navegação em 2 níveis: 5 áreas, cada uma com as suas secções (redesign ARGOS).
 const NAV_GROUPS = [
   { id: "dashboard", label: "Dashboard", views: [["dashboard", "Dashboard"]] },
-  { id: "manutencao", label: "Manutenção", views: [["gantt", "Planeamento"], ["breakdowns", "Ocorrências"], ["definicoes", "Prioridades"], ["meeting", "Reuniões"]] },
+  { id: "manutencao", label: "Manutenção", views: [["gantt", "Planeamento"], ["breakdowns", "Ocorrências"], ["definicoes", "Prioridades"], ["meeting", "Reuniões"], ["kpis", "KPIs"]] },
   { id: "frota", label: "Frota", views: [["fleet", "Viaturas"], ["fleet-inativas", "Inativas"], ["vistoria", "Vistorias"], ["ausencias", "Ausências"]] },
   { id: "entidades", label: "Entidades", views: [["entidades", "Entidades"]] },
   { id: "analise", label: "Análise", views: [["audit", "Rastreio"]] }
@@ -2718,6 +2730,7 @@ function render(focusSelector = "") {
     "fleet-inativas": renderFleet,
     vistoria: renderVistoria,
     definicoes: renderDefinicoes,
+    kpis: renderKPIs,
     entidades: renderEntidades,
     ausencias: renderAusencias,
     audit: renderAudit
@@ -5812,6 +5825,224 @@ function faultTypeOptionsHtml(vehicleType, selectedSet) {
       `</optgroup>`;
   }
   return html;
+}
+
+// ── KPIs (ARGOS 07/10 item 49) — gráficos SVG inline, sem dependências ──────
+const KPI_TYPE_COLORS = { "Corretiva": "#dc2626", "Preventiva": "#16a34a", "Garantia": "#2563eb", "Preditiva": "#7c3aed", "Sinistro": "#ea580c" };
+const KPI_PERIODS = [["week", "Semana"], ["month", "Mês"], ["quarter", "Trimestre"], ["semester", "Semestre"], ["year", "Ano"]];
+const KPI_MONTHS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+const kpiPad2 = (n) => String(n).padStart(2, "0");
+
+function kpiFleetForBreakdown(b) {
+  const plateN = normalizePlate(b.plate);
+  return state.fleet.find((f) => String(f.equipment) === String(b.equipment) || (plateN && normalizePlate(f.plate) === plateN)) || null;
+}
+
+function kpiBuckets(year, period) {
+  const b = [];
+  if (period === "year") {
+    for (let y = year - 4; y <= year; y++) b.push({ label: String(y), start: `${y}-01-01`, end: `${y}-12-31` });
+  } else if (period === "semester") {
+    b.push({ label: "S1", start: `${year}-01-01`, end: `${year}-06-30` });
+    b.push({ label: "S2", start: `${year}-07-01`, end: `${year}-12-31` });
+  } else if (period === "quarter") {
+    [["Q1", "01-01", "03-31"], ["Q2", "04-01", "06-30"], ["Q3", "07-01", "09-30"], ["Q4", "10-01", "12-31"]].forEach(([lab, s, e]) => b.push({ label: lab, start: `${year}-${s}`, end: `${year}-${e}` }));
+  } else if (period === "week") {
+    const today = new Date();
+    const iso = (d) => `${d.getFullYear()}-${kpiPad2(d.getMonth() + 1)}-${kpiPad2(d.getDate())}`;
+    for (let i = 11; i >= 0; i--) {
+      const end = new Date(today); end.setDate(today.getDate() - i * 7);
+      const start = new Date(end); start.setDate(end.getDate() - 6);
+      b.push({ label: `${kpiPad2(start.getDate())}/${kpiPad2(start.getMonth() + 1)}`, start: iso(start), end: iso(end) });
+    }
+  } else {
+    for (let m = 0; m < 12; m++) {
+      const last = new Date(year, m + 1, 0).getDate();
+      b.push({ label: KPI_MONTHS[m], start: `${year}-${kpiPad2(m + 1)}-01`, end: `${year}-${kpiPad2(m + 1)}-${kpiPad2(last)}` });
+    }
+  }
+  return b;
+}
+
+function kpiCountByTypeInRange(start, end) {
+  const counts = {};
+  state.breakdowns.forEach((b) => {
+    const d = (b.reportedAt || "").slice(0, 10);
+    if (d && d >= start && d <= end) {
+      const t = b.interventionType || "Corretiva";
+      counts[t] = (counts[t] || 0) + 1;
+    }
+  });
+  return counts;
+}
+
+function kpiStackedBarsSvg(buckets, types) {
+  const W = 680, H = 240, padL = 34, padR = 10, padT = 14, padB = 28;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const totals = buckets.map((bk) => types.reduce((a, t) => a + (bk.counts[t] || 0), 0));
+  const max = Math.max(1, ...totals);
+  const bw = innerW / buckets.length, barW = Math.min(46, bw * 0.6);
+  let grid = "";
+  for (let g = 0; g <= 4; g++) { const v = Math.round(max * g / 4); const y = padT + innerH - (innerH * g / 4); grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="#e5e7eb"/><text x="2" y="${(y + 3).toFixed(1)}" font-size="9" fill="#94a3b8">${v}</text>`; }
+  let bars = "";
+  buckets.forEach((bk, i) => {
+    const x = padL + i * bw + (bw - barW) / 2;
+    let y = padT + innerH;
+    types.forEach((t) => {
+      const c = bk.counts[t] || 0; if (!c) return;
+      const h = (c / max) * innerH; y -= h;
+      bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${KPI_TYPE_COLORS[t] || "#94a3b8"}"><title>${escapeHtml(t)}: ${c}</title></rect>`;
+    });
+    if (totals[i]) bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" font-size="10" fill="#334155" font-weight="700">${totals[i]}</text>`;
+    bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="10" fill="#64748b">${escapeHtml(bk.label)}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" class="kpi-svg" preserveAspectRatio="xMidYMid meet">${grid}${bars}</svg>`;
+}
+
+function kpiAvailabilityByMonth(year) {
+  const activeFleet = state.fleet.filter((f) => normalizeText(f.status) === "ativa").length || state.fleet.length || 1;
+  const today = todayISO();
+  return KPI_MONTHS.map((lab, m) => {
+    const last = new Date(year, m + 1, 0).getDate();
+    const mStart = `${year}-${kpiPad2(m + 1)}-01`, mEnd = `${year}-${kpiPad2(m + 1)}-${kpiPad2(last)}`;
+    const down = new Set();
+    state.breakdowns.forEach((b) => {
+      const start = (b.reportedAt || "").slice(0, 10); if (!start) return;
+      const close = b.status === "Concluido" ? (b.lastNoteAt || b.reportedAt || "").slice(0, 10) : today;
+      if (start <= mEnd && close >= mStart) down.add(normalizePlate(b.plate) || String(b.equipment));
+    });
+    const avail = mStart > today ? null : Math.max(0, Math.round(((activeFleet - down.size) / activeFleet) * 100));
+    return { label: lab, value: avail };
+  });
+}
+
+function kpiAvailabilitySvg(data) {
+  const W = 680, H = 200, padL = 28, padR = 8, padT = 14, padB = 24;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const bw = innerW / data.length, barW = Math.min(42, bw * 0.62);
+  let bars = "";
+  data.forEach((d, i) => {
+    const x = padL + i * bw + (bw - barW) / 2;
+    if (d.value === null) { bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="10" fill="#cbd5e1">${d.label}</text>`; return; }
+    const h = (d.value / 100) * innerH, y = padT + innerH - h;
+    const color = d.value >= 90 ? "#16a34a" : d.value >= 75 ? "#f59e0b" : "#dc2626";
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}" rx="2"><title>${d.label}: ${d.value}%</title></rect>`;
+    bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" font-size="9" fill="#334155" font-weight="700">${d.value}%</text>`;
+    bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="10" fill="#64748b">${d.label}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" class="kpi-svg">${bars}</svg>`;
+}
+
+function kpiHBarsSvg(items, color) {
+  if (!items.length) return '<p class="empty-state">Sem dados para este ano.</p>';
+  const max = Math.max(1, ...items.map((i) => i.value));
+  const rowH = 26, W = 680, labelW = 190, barMax = W - labelW - 46;
+  const H = items.length * rowH + 6;
+  let rows = "";
+  items.forEach((it, i) => {
+    const y = i * rowH + 6, w = (it.value / max) * barMax;
+    const lab = it.label.length > 32 ? it.label.slice(0, 31) + "…" : it.label;
+    rows += `<text x="0" y="${y + 14}" font-size="11" fill="#334155">${escapeHtml(lab)}</text>`;
+    rows += `<rect x="${labelW}" y="${y + 2}" width="${Math.max(1, w).toFixed(1)}" height="16" fill="${color}" rx="3"/>`;
+    rows += `<text x="${(labelW + w + 6).toFixed(1)}" y="${y + 15}" font-size="11" fill="#334155" font-weight="700">${it.value}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" class="kpi-svg">${rows}</svg>`;
+}
+
+function kpiTopBy(year, keyFn, topN) {
+  const map = new Map();
+  state.breakdowns.forEach((b) => {
+    const d = (b.reportedAt || "").slice(0, 10);
+    if (!(d && d.slice(0, 4) === String(year))) return;
+    const k = (keyFn(b) || "").trim(); if (!k) return;
+    map.set(k, (map.get(k) || 0) + 1);
+  });
+  return [...map.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, topN);
+}
+
+function kpiMTTR(year) {
+  const vals = [];
+  state.breakdowns.forEach((b) => {
+    if (b.status !== "Concluido") return;
+    const start = (b.reportedAt || "").slice(0, 10), end = (b.lastNoteAt || "").slice(0, 10);
+    if (!start || !end || end.slice(0, 4) !== String(year)) return;
+    const d = daysBetween(start, end);
+    if (Number.isFinite(d) && d >= 0) vals.push(d);
+  });
+  return vals.length ? vals.reduce((a, c) => a + c, 0) / vals.length : null;
+}
+
+function kpiMTBF(year, occCount) {
+  const activeFleet = state.fleet.filter((f) => normalizeText(f.status) === "ativa").length || state.fleet.length || 1;
+  const now = new Date();
+  const days = String(year) === String(now.getFullYear()) ? Math.max(1, Math.round((now - new Date(`${year}-01-01T00:00:00`)) / 86400000)) : 365;
+  return occCount ? (activeFleet * days) / occCount : null;
+}
+
+function renderKPIs() {
+  const year = state.kpiYear || new Date().getFullYear();
+  const period = state.kpiPeriod || "month";
+  const buckets = kpiBuckets(year, period).map((bk) => ({ ...bk, counts: kpiCountByTypeInRange(bk.start, bk.end) }));
+  const typesPresent = INTERVENTION_TYPES.filter((t) => buckets.some((bk) => bk.counts[t]));
+  const inYear = (b) => { const d = (b.reportedAt || "").slice(0, 10); return d >= `${year}-01-01` && d <= `${year}-12-31`; };
+  const inPrev = (b) => { const d = (b.reportedAt || "").slice(0, 10); return d >= `${year - 1}-01-01` && d <= `${year - 1}-12-31`; };
+  const yearOcc = state.breakdowns.filter(inYear);
+  const prevCount = state.breakdowns.filter(inPrev).length;
+  const openCount = yearOcc.filter((b) => b.status !== "Concluido").length;
+  const closedCount = yearOcc.filter((b) => b.status === "Concluido").length;
+  const mttr = kpiMTTR(year);
+  const mtbf = kpiMTBF(year, yearOcc.length);
+  const avail = kpiAvailabilityByMonth(year);
+  const availV = avail.filter((a) => a.value !== null).map((a) => a.value);
+  const availAvg = availV.length ? Math.round(availV.reduce((a, c) => a + c, 0) / availV.length) : null;
+  const delta = prevCount ? Math.round((yearOcc.length - prevCount) / prevCount * 100) : null;
+  const topBrand = kpiTopBy(year, (b) => { const f = kpiFleetForBreakdown(b); return f ? ((`${f.brand || ""} ${f.model || ""}`).trim() || f.description || "") : ""; }, 8);
+  const topDriver = kpiTopBy(year, (b) => { const f = kpiFleetForBreakdown(b); return (f && f.driver) || b.driver || ""; }, 8);
+  const byPriority = ["P1", "P2", "P3", "P4"].map((p) => ({ label: p, value: yearOcc.filter((b) => b.priority === p).length })).filter((p) => p.value);
+  const card = (label, val, sub) => `<article class="metric-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(val))}</strong><em>${escapeHtml(sub || "")}</em></article>`;
+  const legend = (typesPresent.length ? typesPresent : ["Corretiva"]).map((t) => `<span class="kpi-leg"><i style="background:${KPI_TYPE_COLORS[t] || "#94a3b8"}"></i>${escapeHtml(t)}</span>`).join("");
+
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <div><p class="eyebrow">Indicadores</p><h2>KPIs — ${year}</h2>
+          <p>${yearOcc.length} ocorrências em ${year}${delta !== null ? ` · <strong style="color:${delta > 0 ? "#dc2626" : "#16a34a"}">${delta >= 0 ? "+" : ""}${delta}%</strong> vs ${year - 1}` : ""}</p></div>
+        <div class="cal-toolbar" style="padding:0">
+          <button class="ghost-button" type="button" data-action="kpi-year-prev" aria-label="Ano anterior">‹</button>
+          <strong class="cal-month">${year}</strong>
+          <button class="ghost-button" type="button" data-action="kpi-year-next" aria-label="Ano seguinte">›</button>
+        </div>
+      </div>
+      <div class="metrics-grid" style="padding:14px 16px">
+        ${card("Ocorrências", yearOcc.length, `${closedCount} concluídas · ${openCount} abertas`)}
+        ${card("Disponibilidade média", availAvg !== null ? `${availAvg}%` : "—", "média mensal da frota")}
+        ${card("MTTR", mttr !== null ? `${mttr.toFixed(1)} d` : "—", "tempo médio de reparação")}
+        ${card("MTBF", mtbf !== null ? `${Math.round(mtbf)} d` : "—", "entre avarias (frota)")}
+      </div>
+
+      <div class="panel-sub">
+        <div class="panel-sub__head"><h3>Ocorrências por período</h3>
+          <div class="chip-filters">${KPI_PERIODS.map(([v, l]) => `<button type="button" class="chip-filter${period === v ? " active" : ""}" data-action="kpi-period" data-period="${v}">${l}</button>`).join("")}</div>
+        </div>
+        <div class="kpi-legend">${legend}</div>
+        ${kpiStackedBarsSvg(buckets, typesPresent.length ? typesPresent : ["Corretiva"])}
+      </div>
+
+      <div class="panel-sub">
+        <h3>Disponibilidade da frota — ${year} (mensal)</h3>
+        ${kpiAvailabilitySvg(avail)}
+      </div>
+
+      <div class="kpi-two-col">
+        <div class="panel-sub"><h3>Marca/modelo com mais avarias</h3>${kpiHBarsSvg(topBrand, "#2563eb")}</div>
+        <div class="panel-sub"><h3>Motoristas com mais ocorrências</h3>${kpiHBarsSvg(topDriver, "#0f766e")}</div>
+      </div>
+
+      <div class="panel-sub">
+        <h3>Ocorrências por prioridade — ${year}</h3>
+        ${kpiHBarsSvg(byPriority, "#dc2626")}
+      </div>
+    </section>`;
 }
 
 function renderDefinicoes() {

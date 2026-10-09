@@ -1172,6 +1172,13 @@ body.modal-open { overflow: hidden; }
 @media (max-width: 640px) { .attachment-list { grid-template-columns: repeat(2, 1fr); } }
 .timeline-item { position: relative; }
 .timeline-item [data-action="history-delete"] { position: absolute; top: 6px; right: 4px; }
+/* KPIs (ARGOS 07/10 item 49) */
+.kpi-svg { width: 100%; height: auto; display: block; margin-top: 6px; }
+.kpi-legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 4px 0 2px; font-size: 12px; color: var(--muted); }
+.kpi-leg { display: inline-flex; align-items: center; gap: 5px; }
+.kpi-leg i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.kpi-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+@media (max-width: 760px) { .kpi-two-col { grid-template-columns: 1fr; } }
 .occ-cell--link { cursor: pointer; }
 .occ-cell--link:hover strong { color: var(--accent); text-decoration: underline; }
 tr:hover .occ-cell--link { background: var(--accent-pale); }

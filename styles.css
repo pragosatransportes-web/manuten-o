@@ -2009,3 +2009,65 @@ body.dock-dragging { user-select: none; }
   padding: 5px 10px; background: #fff; font-size: 13px;
 }
 .ausencia-search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15,118,110,0.12); }
+
+/* ─────────────────────────────────────────────────────────────
+   RESPONSIVO / TELEMÓVEL (ARGOS 07/10 G5)
+   Acrescentado no fim para ter prioridade de ordem sobre @media anteriores.
+   ───────────────────────────────────────────────────────────── */
+@media (max-width: 760px) {
+  /* metric cards em 2 colunas (mais denso que 1 coluna) */
+  .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 12px; }
+}
+@media (max-width: 640px) {
+  .app-shell { padding: 8px 10px; gap: 12px; }
+  main { gap: 12px; }
+  .topbar { padding: 10px 12px; gap: 10px; min-height: 0; }
+  .title-block h1 { font-size: 18px; }
+
+  /* Separadores principais e submenus (já deslizam na horizontal) */
+  .view-tabs { padding: 8px 2px 6px; gap: 6px; }
+  .view-tabs button { min-height: 40px; padding: 8px 14px; font-size: 13.5px; }
+  .subview-nav button { padding: 8px 12px; font-size: 13px; }
+
+  /* Painéis, cabeçalhos e barras de ferramentas mais compactos */
+  .panel-header { padding: 12px 14px; flex-wrap: wrap; gap: 8px; }
+  .panel-header__actions { width: 100%; }
+  .panel-header__actions .primary-button,
+  .panel-header__actions .ghost-button { flex: 1 1 auto; justify-content: center; }
+  .toolbar { padding: 10px 12px; gap: 8px; }
+  .toolbar input, .toolbar select, .search-field, .fleet-filter { flex: 1 1 100%; min-width: 0; }
+  .page-grid { gap: 12px; }
+  .button-row { flex-wrap: wrap; }
+
+  /* Cartões de métricas / detalhe */
+  .metric-card strong { font-size: 22px; }
+  .detail-plate { font-size: 22px; }
+  .detail-occ-id { flex-wrap: wrap; gap: 4px; }
+
+  /* Frota em 1 coluna */
+  .fleet-grid { padding: 12px; gap: 10px; grid-template-columns: 1fr; }
+
+  /* Modais ocupam quase todo o ecrã e fazem scroll interno */
+  .modal-overlay { padding: 2vh 8px; align-items: flex-start; }
+  .modal, .modal--wide { max-width: 100%; }
+  .modal__body { padding: 14px; max-height: 84vh; overflow-y: auto; }
+  .form-grid { grid-template-columns: 1fr; }
+
+  /* Planeamento: 6 dias deslizáveis na horizontal (em vez de espremidos) */
+  .gantt-week, .gantt-month { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .gantt-week, .gantt-month__head, .gantt-month__row { grid-template-columns: repeat(6, minmax(96px, 1fr)); }
+
+  /* Janela de reunião quase full-screen */
+  .dock-panel { width: 94vw; min-width: 0; max-height: 86vh; }
+
+  /* KPIs numa coluna */
+  .kpi-two-col { grid-template-columns: 1fr; }
+  .attachment-list { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 430px) {
+  .metrics-grid { grid-template-columns: 1fr; }
+  /* Botões do topo só com ícone (poupar largura) */
+  .top-actions .ghost-button span:not([data-icon]),
+  .top-actions .primary-button span:not([data-icon]) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .plan-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+}

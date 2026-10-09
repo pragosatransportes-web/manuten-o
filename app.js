@@ -19,6 +19,7 @@ let remoteBreakdownHasDetails = true;
 let remoteBreakdownHasWorkshopExit = true;
 let remoteBreakdownHasFaults = true;
 let remoteBreakdownHasPreventive = true;
+let remoteBreakdownHasEstados = true;
 
 // Tipos de ausência de motorista (calendário de ausências, migração 003).
 const ABSENCE_TYPES = ["Férias", "Baixa médica"];
@@ -674,6 +675,11 @@ document.addEventListener("change", async (event) => {
   if (target.dataset.ausenciaId && target.dataset.ausenciaField) {
     await updateAusenciaField(target.dataset.ausenciaId, target.dataset.ausenciaField, target.value);
   }
+  // Item 17: no detalhe, ao mudar o Estado da avaria restringe o Estado da viatura (matriz).
+  if (target.id === "detail-estado-avaria") {
+    const ev = document.querySelector("#detail-estado-viatura");
+    if (ev) ev.innerHTML = estadoViaturaOptionsHtml(target.value, ev.value);
+  }
   if (target.dataset.ausenciaPaint === "driver") {
     setPaintDriver(target.value);
   }
@@ -1040,6 +1046,7 @@ async function loadRemoteState() {
     remoteBreakdownHasWorkshopExit = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "workshop_exit_at");
     remoteBreakdownHasFaults = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "faults");
     remoteBreakdownHasPreventive = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "preventive_plan");
+    remoteBreakdownHasEstados = Object.prototype.hasOwnProperty.call(breakdownsResult.data[0], "estado_avaria");
   }
 
   if (!fleetResult.data.length && !breakdownsResult.data.length) {
@@ -1209,6 +1216,10 @@ function applyRemoteRow(payload, collection, mapper) {
     }
     if (collection === "breakdowns" && !remoteBreakdownHasPreventive) {
       item.preventivePlan = state.breakdowns[index].preventivePlan || item.preventivePlan;
+    }
+    if (collection === "breakdowns" && !remoteBreakdownHasEstados) {
+      item.estadoAvaria = state.breakdowns[index].estadoAvaria || item.estadoAvaria;
+      item.estadoViatura = state.breakdowns[index].estadoViatura || item.estadoViatura;
     }
     state[collection][index] = item;
   } else {
@@ -2152,6 +2163,11 @@ function appBreakdownToDb(item) {
   if (remoteBreakdownHasFaults) row.faults = normalizeFaults(item.faults);
   // Plano de preventiva periódica — só envia quando a coluna existe (migração 012).
   if (remoteBreakdownHasPreventive) row.preventive_plan = normalizePreventive(item.preventivePlan);
+  // Estado da avaria + Estado da viatura (modelo de 2 eixos) — migração 013.
+  if (remoteBreakdownHasEstados) {
+    row.estado_avaria = item.estadoAvaria || null;
+    row.estado_viatura = item.estadoViatura || null;
+  }
   // Ligação à vistoria de origem — só envia as colunas quando existe ligação,
   // para não exigir as colunas nas avarias antigas (sem ligação).
   if (item.vistoriaId) {
@@ -2196,6 +2212,8 @@ function dbBreakdownToApp(row) {
     workshopExitAt: row.workshop_exit_at || null,
     faults: row.faults,
     preventivePlan: row.preventive_plan || null,
+    estadoAvaria: row.estado_avaria || "",
+    estadoViatura: row.estado_viatura || "",
     vistoriaId: row.vistoria_id || "",
     vistoriaItem: row.vistoria_item || "",
     vistoriaSection: row.vistoria_section || "",
@@ -3345,7 +3363,8 @@ function renderDetail(breakdown) {
       </div>
       <div class="detail-occ-meta">
         ${priorityBadge(breakdown.priority)}
-        ${statusBadge(breakdown.status)}
+        ${estadoAvariaBadge(breakdown)}
+        ${estadoViaturaBadge(breakdown)}
         <span class="detail-progress-lg">${progressBadge(breakdown)}</span>
       </div>
     </div>
@@ -3419,16 +3438,15 @@ function renderDetail(breakdown) {
           </select>
         </label>
         <label class="field">
-          <span>Estado</span>
-          <select name="status">
-            ${options.statuses.map((status) => `<option value="${escapeAttr(status)}" ${breakdown.status === status ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}
+          <span>Estado da avaria</span>
+          <select name="estadoAvaria" id="detail-estado-avaria">
+            ${ESTADO_AVARIA.map((e) => `<option value="${escapeAttr(e)}"${occEstadoAvaria(breakdown) === e ? " selected" : ""}>${escapeHtml(e)}</option>`).join("")}
           </select>
         </label>
         <label class="field">
-          <span>Situação</span>
-          <select name="situation">
-            <option value="" ${!breakdown.situation ? "selected" : ""}></option>
-            ${options.situations.map((situation) => `<option value="${escapeAttr(situation)}" ${breakdown.situation === situation ? "selected" : ""}>${escapeHtml(situation)}</option>`).join("")}
+          <span>Estado da viatura</span>
+          <select name="estadoViatura" id="detail-estado-viatura">
+            ${estadoViaturaOptionsHtml(occEstadoAvaria(breakdown), occEstadoViatura(breakdown))}
           </select>
         </label>
         <label class="field">
@@ -3548,8 +3566,8 @@ function breakdownListRow(item) {
     </td>
     <td>${escapeHtml(getBreakdownCompany(item) || "-")}</td>
     <td>${escapeHtml(item.plate || "-")}</td>
-    <td>${statusBadge(item.status)}</td>
-    <td>${escapeHtml(item.situation || "-")}</td>
+    <td>${estadoAvariaBadge(item)}</td>
+    <td>${estadoViaturaBadge(item)}</td>
     <td>${breakdownDatesCell(item)}</td>
     <td>${escapeHtml(item.workshop || item.workshopType || "-")}</td>
     <td class="compact-cell">${escapeHtml(item.lastNote || item.description || "-")}</td>
@@ -3576,15 +3594,63 @@ function priorityBadge(priority) {
   return `<span class="prio-badge prio-badge--${escapeAttr(cls)}" title="Prioridade ${escapeAttr(priority)}">${escapeHtml(priority)}</span>`;
 }
 
+// ── Modelo de 2 eixos (ARGOS 07/10 item 17) ─────────────────────────────────
+const ESTADO_AVARIA = ["Comunicada", "Agendada", "Em intervenção", "Concluída"];
+const ESTADO_VIATURA = ["A circular", "A circular condicionada", "Não pode circular", "Parada"];
+// Combinações válidas de Estado da viatura por Estado da avaria.
+const ESTADO_MATRIX = {
+  "Comunicada": ["A circular", "A circular condicionada", "Não pode circular", "Parada"],
+  "Agendada": ["A circular", "A circular condicionada", "Parada"],
+  "Em intervenção": ["Não pode circular"],
+  "Concluída": ["A circular", "A circular condicionada", "Parada"]
+};
+const ESTADO_AVARIA_TO_STAGE = { "Comunicada": "comunicadas", "Agendada": "agendadas", "Em intervenção": "curso", "Concluída": "concluidas" };
+
+// Estado da avaria (novo campo) ou derivado do estado antigo (status/situação) — não-destrutivo.
+function occEstadoAvaria(b) {
+  if (b.estadoAvaria) return b.estadoAvaria;
+  if (b.status === "Concluido") return "Concluída";
+  if (b.status === "Agendado") return "Agendada";
+  if (b.situation === "Em oficina") return "Em intervenção";
+  return "Comunicada";
+}
+function occEstadoViatura(b) {
+  if (b.estadoViatura) return b.estadoViatura;
+  if (b.status === "Concluido") return "A circular";
+  if (occEstadoAvaria(b) === "Em intervenção") return "Não pode circular";
+  return b.status === "Parado" ? "Não pode circular" : "A circular";
+}
+// Deriva o estado antigo (status/situation) a partir dos 2 eixos — mantém Dashboard/Planeamento a funcionar.
+function deriveLegacyFromEstados(b) {
+  const ea = b.estadoAvaria, ev = b.estadoViatura;
+  if (ea === "Concluída") b.status = "Concluido";
+  else if (ea === "Agendada") b.status = "Agendado";
+  else b.status = (ev === "A circular" || ev === "A circular condicionada") ? "Pode circular" : "Parado";
+  if (ea === "Em intervenção") b.situation = "Em oficina";
+  else if (ea === "Agendada") b.situation = "Aguarda entrada na oficina";
+  else if (ea === "Concluída") b.situation = "";
+  else b.situation = (b.situation === "Aguarda peças") ? "Aguarda peças" : "";
+}
+function estadoAvariaClass(e) {
+  const n = normalizeText(e);
+  return n === "concluida" ? "done" : n.includes("intervencao") ? "curso" : n === "agendada" ? "sched" : "comm";
+}
+function estadoViaturaClass(v) {
+  const n = normalizeText(v);
+  return n === "a circular" ? "ok" : n.includes("condicionada") ? "warn" : "bad";
+}
+function estadoAvariaBadge(b) { const e = occEstadoAvaria(b); return `<span class="estado-badge estado-badge--a-${estadoAvariaClass(e)}">${escapeHtml(e)}</span>`; }
+function estadoViaturaBadge(b) { const v = occEstadoViatura(b); return `<span class="estado-badge estado-badge--v-${estadoViaturaClass(v)}" title="Disponibilidade da viatura">${escapeHtml(v)}</span>`; }
+
+// Opções <option> de Estado da viatura válidas para um Estado da avaria.
+function estadoViaturaOptionsHtml(estadoAvaria, selected) {
+  const allowed = ESTADO_MATRIX[estadoAvaria] || ESTADO_VIATURA;
+  return allowed.map((v) => `<option value="${escapeAttr(v)}"${normalizeText(v) === normalizeText(selected || "") ? " selected" : ""}>${escapeHtml(v)}</option>`).join("");
+}
+
 function matchesOccurrenceStage(item, stage) {
   if (!stage) return true;
-  if (stage === "agendadas") return item.status === "Agendado";
-  if (stage === "concluidas") return item.status === "Concluido";
-  const active = item.status !== "Concluido" && item.status !== "Agendado";
-  // Comunicada = reportada/à espera (ainda sem entrada na oficina). Em curso = já em oficina.
-  if (stage === "comunicadas") return active && item.situation !== "Em oficina";
-  if (stage === "curso") return active && item.situation === "Em oficina";
-  return true;
+  return ESTADO_AVARIA_TO_STAGE[occEstadoAvaria(item)] === stage;
 }
 
 function renderBreakdowns() {
@@ -3618,8 +3684,8 @@ function renderBreakdowns() {
                 <th>Ocorrência</th>
                 <th>Empresa</th>
                 <th>Matrícula</th>
-                <th>Estado</th>
-                <th>Situação</th>
+                <th>Estado avaria</th>
+                <th>Estado viatura</th>
                 <th>Datas</th>
                 <th>Oficina</th>
                 <th>Nota</th>
@@ -4002,8 +4068,13 @@ function openOccurrenceModal() {
           <label class="field">Intervenção no terreno?
             <select name="onSite" id="occ-onsite"><option value="nao">Não</option><option value="sim">Sim</option></select>
           </label>
-          <label class="field">Estado inicial *
-            <select name="status" required>${options.statuses.filter((s) => s !== "Concluido").map((s) => `<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join("")}</select>
+          <label class="field">Estado da avaria *
+            <select name="estadoAvaria" id="occ-estado-avaria" required>${ESTADO_AVARIA.filter((e) => e !== "Concluída").map((e) => `<option value="${escapeAttr(e)}">${escapeHtml(e)}</option>`).join("")}</select>
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field">Estado da viatura *
+            <select name="estadoViatura" id="occ-estado-viatura" required>${estadoViaturaOptionsHtml("Comunicada", "A circular")}</select>
           </label>
         </div>
         <div id="occ-workshop-fields">
@@ -4224,6 +4295,10 @@ function wireOccurrenceModal() {
     workshopSel.innerHTML = `<option value="">—</option>` + oficinas.map((o) => `<option value="${escapeAttr(o.empresa)}"${o.empresa === cur ? " selected" : ""}>${escapeHtml(o.empresa)}</option>`).join("");
   };
 
+  // Item 17: Estado da viatura restringido pela matriz do Estado da avaria.
+  const estAvaria = root.querySelector("#occ-estado-avaria");
+  const estViatura = root.querySelector("#occ-estado-viatura");
+  if (estAvaria && estViatura) estAvaria.addEventListener("change", () => { estViatura.innerHTML = estadoViaturaOptionsHtml(estAvaria.value, estViatura.value); });
   if (plate) plate.addEventListener("change", fillFromPlate);
   // 16.2 — ao focar/clicar na matrícula já preenchida, limpa para a lista voltar a aparecer;
   // se sair sem escolher, repõe o valor anterior.
@@ -5202,8 +5277,16 @@ async function handleQuickUpdate(form, intent) {
 
   const data = new FormData(form);
   const previous = { ...breakdown };
-  const nextStatus = intent === "close" ? "Concluido" : String(data.get("status") || breakdown.status);
-  const finalStatus = intent === "reopen" && nextStatus === "Concluido" ? "Parado" : nextStatus;
+  // Item 17: estado da avaria + estado da viatura (2 eixos); o legado (status/situation) é derivado.
+  let estadoAvaria = data.has("estadoAvaria") ? String(data.get("estadoAvaria")) : occEstadoAvaria(breakdown);
+  if (intent === "close") estadoAvaria = "Concluída";
+  if (intent === "reopen" && estadoAvaria === "Concluída") estadoAvaria = "Comunicada";
+  let estadoViatura = data.has("estadoViatura") ? String(data.get("estadoViatura")) : occEstadoViatura(breakdown);
+  if (!(ESTADO_MATRIX[estadoAvaria] || []).includes(estadoViatura)) estadoViatura = (ESTADO_MATRIX[estadoAvaria] || ESTADO_VIATURA)[0];
+  breakdown.estadoAvaria = estadoAvaria;
+  breakdown.estadoViatura = estadoViatura;
+  deriveLegacyFromEstados(breakdown);
+  const finalStatus = breakdown.status;
   const note = String(data.get("note") || "").trim();
   let auditEvent = null;
 
@@ -5220,8 +5303,6 @@ async function handleQuickUpdate(form, intent) {
     }
   }
 
-  breakdown.status = finalStatus;
-  breakdown.situation = finalStatus === "Concluido" ? "" : String(data.get("situation") || "").trim();
   breakdown.expectedEntryAt = emptyToNull(data.get("expectedEntryAt"));
   breakdown.expectedExitAt = emptyToNull(data.get("expectedExitAt"));
   breakdown.workshopEntryAt = emptyToNull(data.get("workshopEntryAt"));
@@ -5363,6 +5444,10 @@ async function handleNewBreakdown(form) {
     return;
   }
   const attachmentNote = formatAttachmentNames(attachments);
+  // Item 17: estado da avaria + estado da viatura (2 eixos). Preventiva periódica → "Agendada".
+  const estadoAvaria = preventivePlan ? "Agendada" : String(data.get("estadoAvaria") || "Comunicada");
+  let estadoViatura = String(data.get("estadoViatura") || "A circular");
+  if (!(ESTADO_MATRIX[estadoAvaria] || []).includes(estadoViatura)) estadoViatura = (ESTADO_MATRIX[estadoAvaria] || ESTADO_VIATURA)[0];
   const breakdown = {
     id,
     equipment,
@@ -5379,8 +5464,10 @@ async function handleNewBreakdown(form) {
     type: typeStr,
     faults,
     preventivePlan,
-    status: preventivePlan ? "Agendado" : String(data.get("status") || "Parado"),
-    situation: String(data.get("situation") || "").trim(),
+    estadoAvaria,
+    estadoViatura,
+    status: "Parado",
+    situation: "",
     reportedAt,
     workshopEntryAt: emptyToNull(data.get("workshopEntryAt")),
     expectedEntryAt: onSite ? null : emptyToNull(data.get("expectedEntryAt")),
@@ -5410,6 +5497,7 @@ async function handleNewBreakdown(form) {
   state.avariaFromVistoria = null;
 
   deriveBreakdownFromFaults(breakdown); // tipo + prioridade a partir das avarias
+  deriveLegacyFromEstados(breakdown); // status/situation a partir dos 2 eixos (item 17)
   state.breakdowns.unshift(breakdown);
   state.selectedId = breakdown.id;
   state.currentView = fromModal ? "breakdowns" : "meeting";

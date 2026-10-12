@@ -633,6 +633,9 @@ document.addEventListener("keydown", (event) => {
 
 document.addEventListener("input", (event) => {
   const target = event.target;
+  if (target.classList && target.classList.contains("auto-grow")) {
+    autoGrowTextarea(target);
+  }
   if (target.dataset.filter) {
     setFilter(target.dataset.filter, target.value);
   }
@@ -644,6 +647,16 @@ document.addEventListener("input", (event) => {
     if (el) el.innerHTML = ausenciaVehiclePreviewHtml(target.value);
   }
 });
+
+// Textarea que cresce com o conteúdo (campos de descrição/nota das ocorrências).
+function autoGrowTextarea(el) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight + 2, 1500) + "px";
+}
+function autoGrowAll(root) {
+  (root || document).querySelectorAll("textarea.auto-grow").forEach(autoGrowTextarea);
+}
 
 document.addEventListener("change", async (event) => {
   const target = event.target;
@@ -3312,7 +3325,7 @@ function refreshDetailModal() {
   const holder = document.querySelector("#modal-root [data-detail-modal]");
   if (!holder) return;
   const b = state.breakdowns.find((x) => String(x.id) === String(state.selectedId));
-  if (b) { holder.innerHTML = renderDetail(b); hydrateIcons(); }
+  if (b) { holder.innerHTML = renderDetail(b); hydrateIcons(); autoGrowAll(holder); }
 }
 
 async function handleFaultAction(action, button) {
@@ -3497,11 +3510,11 @@ function renderDetail(breakdown) {
         </label>
         <label class="field full-span">
           <span>Descrição ${isAdmin ? "" : '<span class="lock-ico" title="Só ADMIN">🔒</span>'}</span>
-          <textarea name="description" placeholder="Descrição da avaria"${isAdmin ? "" : " disabled"}>${escapeHtml(breakdown.description || "")}</textarea>
+          <textarea class="auto-grow" name="description" placeholder="Descrição da avaria"${isAdmin ? "" : " disabled"}>${escapeHtml(breakdown.description || "")}</textarea>
         </label>
         <label class="field full-span">
           <span>Nota</span>
-          <textarea name="note" placeholder="Atualização para guardar no histórico"></textarea>
+          <textarea class="auto-grow" name="note" placeholder="Atualização para guardar no histórico"></textarea>
         </label>
         <label class="field file-field full-span">
           <span>Adicionar ficheiros/fotografias</span>
@@ -4207,7 +4220,7 @@ function openOccurrenceModal() {
         <div id="occ-fault-list" class="occ-fault-list"></div>
         <label class="field field--check"><input type="checkbox" id="occ-desc-toggle"${descPrefill ? " checked" : ""}> <span>Adicionar descrição?</span></label>
         <label class="field field--wide" id="occ-desc-wrap"${descPrefill ? "" : " hidden"}>Descrição adicional da avaria
-          <textarea name="description" rows="3">${escapeHtml(descPrefill)}</textarea>
+          <textarea class="auto-grow" name="description" rows="3">${escapeHtml(descPrefill)}</textarea>
         </label>
         <div class="field-row">
           <label class="field">Km
@@ -5740,6 +5753,7 @@ function openModal(title, bodyHtml, opts = {}) {
       </div>
     </div>`;
   hydrateIcons();
+  autoGrowAll(root);
   document.body.classList.add("modal-open");
   const overlay = root.querySelector(".modal-overlay");
   if (overlay) overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeModal(); });

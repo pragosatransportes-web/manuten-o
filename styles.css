@@ -1194,6 +1194,7 @@ body.modal-open { overflow: hidden; }
 .estado-badge--v-bad   { background: #fee2e2; color: #991b1b; }
 /* Textarea que cresce com o conteúdo (descrição/nota das ocorrências). */
 textarea.auto-grow { overflow: hidden; resize: vertical; min-height: 58px; line-height: 1.4; }
+.audit-cap-note { margin: 0 16px; padding: 8px 12px; font-size: 12px; color: var(--muted); background: var(--surface-soft); border: 1px dashed var(--line-strong); border-radius: var(--radius-sm); }
 .occ-cell--link { cursor: pointer; }
 .occ-cell--link:hover strong { color: var(--accent); text-decoration: underline; }
 tr:hover .occ-cell--link { background: var(--accent-pale); }

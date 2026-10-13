@@ -5358,13 +5358,14 @@ function renderAudit() {
             }).join("")}
           </div>
         </div>
+        ${audit.length > 500 ? `<p class="audit-cap-note">A mostrar os <strong>500</strong> eventos mais recentes de <strong>${audit.length}</strong>. Refina com a pesquisa ou os filtros de período.</p>` : ""}
         <div class="timeline" style="padding: 16px; margin-top: 0;">
-          ${audit.slice(0, 160).map((item) => `
+          ${audit.length ? audit.slice(0, 500).map((item) => `
             <article class="timeline-item">
               <time>${formatDateTime(item.at)} · Equip. ${escapeHtml(item.equipment || "-")} · ${escapeHtml(item.action)}</time>
               <p>${escapeHtml(item.note || "-")}</p>
             </article>
-          `).join("")}
+          `).join("") : '<p class="empty-state">Sem eventos para estes filtros.</p>'}
         </div>
       </div>
     </section>

@@ -7952,12 +7952,16 @@ function groupMeetingEventsByResp(events) {
 }
 
 function buildMeetingReportWorkbook(meeting) {
+  // Alinhado com o relatório em ecrã: só Notas + Tarefas (sem "Novas avarias/Atualizações").
   const ev = meeting.events || [];
-  const novas = ev.filter((e) => e.type === "new");
-  const updates = ev.filter((e) => e.type === "update" || e.type === "close" || e.type === "reopen");
   const tarefas = ev.filter((e) => e.type === "task");
   const notas = ev.filter((e) => e.type === "note");
   const dia = formatDate((meeting.startedAt || "").slice(0, 10));
+  // Ordena por Resp. Logística → matrícula para espelhar o agrupamento do email.
+  const bySort = (arr) => arr.slice().sort((a, b) =>
+    (eventResp(a) || "").localeCompare(eventResp(b) || "", "pt") ||
+    (a.plate || "").localeCompare(b.plate || "", "pt", { numeric: true }) ||
+    String(a.at).localeCompare(String(b.at)));
   return {
     title: "Relatório de reunião",
     fileName: `reuniao-${(meeting.startedAt || "").slice(0, 10)}`,
@@ -7971,31 +7975,19 @@ function buildMeetingReportWorkbook(meeting) {
           ["Fim", meeting.endedAt ? formatTimeOnly(meeting.endedAt) : "—"],
           ["Duração (min)", meeting.endedAt ? meeting.durationMin : "—"],
           ["Operador", meeting.operator || "-"],
-          ["Novas avarias", novas.length],
-          ["Atualizações", updates.length],
-          ["Tarefas", tarefas.length],
-          ["Notas", notas.length]
+          ["Notas", notas.length],
+          ["Tarefas", tarefas.length]
         ]
-      },
-      {
-        title: "Novas avarias",
-        columns: ["Resp. Logística", "Hora", "Equip.", "Matrícula", "Descrição"],
-        rows: novas.map((e) => [eventResp(e) || "—", formatTimeOnly(e.at), String(e.equipment || ""), e.plate || "", e.summary || ""])
-      },
-      {
-        title: "Atualizações",
-        columns: ["Resp. Logística", "Hora", "Equip.", "Matrícula", "Ação", "Resumo"],
-        rows: updates.map((e) => [eventResp(e) || "—", formatTimeOnly(e.at), String(e.equipment || ""), e.plate || "", meetingEventLabel(e.type), e.summary || ""])
-      },
-      {
-        title: "Tarefas",
-        columns: ["Resp. Logística", "Hora", "Estado", "Matrícula", "Equip.", "Tarefa"],
-        rows: tarefas.map((e) => [eventResp(e) || "—", formatTimeOnly(e.at), e.done ? "Concluída" : "Pendente", e.plate || "", String(e.equipment || ""), e.summary || ""])
       },
       {
         title: "Notas",
         columns: ["Resp. Logística", "Hora", "Matrícula", "Equip.", "Nota / observação"],
-        rows: notas.map((e) => [eventResp(e) || "—", formatTimeOnly(e.at), e.plate || "", String(e.equipment || ""), e.summary || ""])
+        rows: bySort(notas).map((e) => [eventResp(e) || "—", formatTimeOnly(e.at), e.plate || "", String(e.equipment || ""), e.summary || ""])
+      },
+      {
+        title: "Tarefas",
+        columns: ["Resp. Logística", "Hora", "Estado", "Matrícula", "Equip.", "Tarefa"],
+        rows: bySort(tarefas).map((e) => [eventResp(e) || "—", formatTimeOnly(e.at), e.done ? "Concluída" : "Pendente", e.plate || "", String(e.equipment || ""), e.summary || ""])
       }
     ]
   };
@@ -8008,14 +8000,15 @@ function exportMeetingReportExcel(id) {
 }
 
 function meetingReportText(meeting) {
-  const ev = meeting.events || [];
+  // Alinhado com o relatório em ecrã: só Notas + Tarefas (sem "Novas avarias/Atualizações").
+  const ev = (meeting.events || []).filter((e) => e.type === "note" || e.type === "task");
   const groups = groupMeetingEventsByResp(ev);
   const heading = (t) => `${t}\n${"─".repeat(Math.min(60, t.length))}`;
   const lines = [];
   lines.push(heading(`Relatório de Reunião — ${formatDate((meeting.startedAt || "").slice(0, 10))}`));
   if (meeting.endedAt) lines.push(`Duração: ${meeting.durationMin} min`);
   lines.push(`Operador: ${meeting.operator || "-"}`);
-  lines.push(`Total de registos: ${ev.length}`);
+  lines.push(`Notas e tarefas: ${ev.length}`);
   lines.push("");
   if (!groups.length) { lines.push("(sem registos)"); return lines.join("\n"); }
   groups.forEach((g) => {
@@ -8047,14 +8040,15 @@ function workbookToXlsxBase64(workbook) {
 }
 
 function meetingReportHtml(meeting) {
-  const ev = meeting.events || [];
+  // Alinhado com o relatório em ecrã: só Notas + Tarefas (sem "Novas avarias/Atualizações").
+  const ev = (meeting.events || []).filter((e) => e.type === "note" || e.type === "task");
   const groups = groupMeetingEventsByResp(ev);
   const dia = escapeHtml(formatDate((meeting.startedAt || "").slice(0, 10)));
   const head = `
     <div style="font-family:Arial,sans-serif;color:#111827">
       <h2 style="margin:0 0 4px">Relatório de reunião — ${dia}</h2>
       <p style="color:#6b7280;margin:0 0 12px">
-        ${escapeHtml(formatTimeOnly(meeting.startedAt))}${meeting.endedAt ? ` – ${escapeHtml(formatTimeOnly(meeting.endedAt))} · ${meeting.durationMin} min` : " (a decorrer)"} · ${escapeHtml(meeting.operator || "-")} · ${ev.length} registos
+        ${escapeHtml(formatTimeOnly(meeting.startedAt))}${meeting.endedAt ? ` – ${escapeHtml(formatTimeOnly(meeting.endedAt))} · ${meeting.durationMin} min` : " (a decorrer)"} · ${escapeHtml(meeting.operator || "-")} · ${ev.length} notas/tarefas
       </p>`;
   if (!groups.length) return `${head}<p>(sem registos)</p></div>`;
   const sections = groups.map((g) => {

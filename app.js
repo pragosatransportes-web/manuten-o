@@ -329,6 +329,8 @@ document.addEventListener("click", async (event) => {
     state.filters.search       = "";
     state.filters.status       = statusValue ? [statusValue] : [];
     state.filters.situation    = [];
+    state.filters.estadoAvaria = [];
+    state.filters.estadoViatura = [];
     state.filters.type         = [];
     state.filters.respLog      = [];
     state.filters.oficina      = [];
@@ -881,6 +883,8 @@ function makeInitialState() {
       search: "",
       status: [],
       situation: [],
+      estadoAvaria: [],
+      estadoViatura: [],
       type: [],
       respLog: [],
       oficina: [],
@@ -3282,8 +3286,8 @@ function renderFilters(context) {
     <div class="toolbar">
       ${searchFieldHtml("search", searchPlaceholder)}
       ${renderMultiFilter("company", "Empresas", ["CPSA", "PTSA"])}
-      ${renderMultiFilter("status", "Estados", options.statuses)}
-      ${renderMultiFilter("situation", "Situações", options.situations)}
+      ${renderMultiFilter("estadoAvaria", "Estado avaria", ESTADO_AVARIA)}
+      ${renderMultiFilter("estadoViatura", "Estado viatura", ESTADO_VIATURA)}
       ${renderMultiFilter("respLog", "Resp. LOG.", respLogEntidades().map((e) => e.empresa || e.contactoNome).filter(Boolean))}
       ${renderMultiFilter("oficina", "Oficina", entidadesByCategoria("Oficina").map((e) => e.empresa).filter(Boolean))}
       ${sortButton}
@@ -7507,11 +7511,17 @@ function getFilteredBreakdowns(activeOnly) {
   let list = state.breakdowns.filter((item) => !activeOnly || item.status !== "Concluido");
   const statusF = filterArray("status");
   const situationF = filterArray("situation");
+  const estadoAvariaF = filterArray("estadoAvaria");
+  const estadoViaturaF = filterArray("estadoViatura");
   const respLogF = filterArray("respLog");
   const oficinaF = filterArray("oficina");
   const companyF = filterArray("company");
+  // Filtros antigos (status/situation) mantidos p/ a navegação do Dashboard.
   if (statusF.length) list = list.filter((item) => statusF.includes(item.status));
   if (situationF.length) list = list.filter((item) => situationF.includes(item.situation));
+  // Filtros do modelo de 2 eixos (lista de ocorrências).
+  if (estadoAvariaF.length) list = list.filter((item) => estadoAvariaF.includes(occEstadoAvaria(item)));
+  if (estadoViaturaF.length) list = list.filter((item) => estadoViaturaF.includes(occEstadoViatura(item)));
   if (respLogF.length) list = list.filter((item) => respLogF.includes(breakdownResp(item)));
   if (oficinaF.length) list = list.filter((item) => oficinaF.includes(item.workshop));
   if (companyF.length) list = list.filter((item) => companyF.includes(getBreakdownCompany(item)));
@@ -7814,7 +7824,7 @@ function findFleetByPlate(value) {
 
 function resetBrowseFilters() {
   Object.assign(state.filters, {
-    search: "", status: [], situation: [], type: [], respLog: [], oficina: [], company: [],
+    search: "", status: [], situation: [], estadoAvaria: [], estadoViatura: [], type: [], respLog: [], oficina: [], company: [],
     workshopType: "", semPrevisao: false, occurrenceStale: false, occurrenceStage: "comunicadas",
     fleetSearch: "", fleetScope: "", fleetFCompany: "", fleetFResp: "", fleetFDriver: "", fleetFKind: "",
     auditSearch: "", auditType: "", auditPeriod: "",

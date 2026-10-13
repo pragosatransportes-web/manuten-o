@@ -87,6 +87,9 @@ td.num input{text-align:right}
 .hist{font-size:11.5px;color:var(--text-2);border-left:2px solid var(--border);padding-left:10px;margin-top:6px}
 .hist div{margin-bottom:2px}
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+.ctx-menu{position:fixed;z-index:60;background:var(--surface);border:1px solid var(--border-2);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px;min-width:230px}
+.ctx-menu button{display:block;width:100%;text-align:left;background:none;border:0;padding:8px 10px;border-radius:6px;font:inherit;font-size:13px;color:var(--text);cursor:pointer}
+.ctx-menu button:hover{background:var(--border)}
 .modal{background:var(--surface);border-radius:12px;max-width:560px;width:100%;max-height:85vh;overflow:auto;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.2)}
 .modal h3{font-size:15px;margin-bottom:14px}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#18181b;color:#fff;font-size:12.5px;padding:9px 16px;border-radius:8px;z-index:60;opacity:0;transition:opacity .2s;pointer-events:none}
@@ -743,7 +746,7 @@ function renderPainel(){
 function renderLogistica(){
   const editable=perms.editLog();
   $("#sec-logistica").innerHTML=`
-    <div class="sh"><div><h2>Introdução de preços — Logística</h2><div class="sub"><span id="log-count"></span> · <b>+ Nova rota</b> grava em rascunho; carrega <b>Enviar →</b> para gerar a tarefa em Compras · alterar uma linha aberta obriga a <b>✓ Guardar</b></div></div>
+    <div class="sh"><div><h2>Introdução de preços — Logística</h2><div class="sub"><span id="log-count"></span> · <b>+ Nova rota</b> grava em rascunho; carrega <b>Enviar →</b> para gerar a tarefa em Compras · alterar uma linha aberta obriga a <b>✓ Guardar</b> · <b>botão direito</b> numa linha para a duplicar para outro transportador</div></div>
       ${editable?`<button class="btn primary" onclick="novaLinha()">+ Nova rota</button>`:`<span class="chip">Só leitura (perfil ${esc(perfil)})</span>`}</div>
     ${toolbarHTML(true)}
     <div class="table-wrap"><table>
@@ -770,7 +773,7 @@ function renderLogBody(){
     const ce=criadaEm(l);
     const diasR=diasRascunho(l), velho=diasR>=RASCUNHO_STALE_DIAS;
     const rowCls=l.estado==="alteracao_pendente"?" class=\"row-alt\"":(l.estado==="rascunho"?` class="row-rascunho${velho?" row-rascunho-old":""}" title="Rascunho há ${diasR} dia(s) — ainda não enviado às Compras"`:"");
-    return `<tr id="row-${l.id}"${rowCls}>
+    return `<tr id="row-${l.id}"${rowCls}${editable?` oncontextmenu="ctxLinha(event,'${l.id}')"`:""}>
       <td style="white-space:nowrap" title="${esc(dtLabel(ce))}">${ce?new Date(ce).toLocaleDateString("pt-PT"):"—"}</td>
       <td>${esc(l.categoria)}</td>
       <td style="min-width:150px">${esc(l.nomeTransp||l.idTransp)}</td>
@@ -983,6 +986,65 @@ async function criarLinhas(enviar){
   }
   closeModal();
   toast(`${ids.length} ${ids.length>1?"rotas":"rota"} ${enviar?"enviada(s) para Compras":"gravada(s) em rascunho"}`);
+  render();
+}
+/* ===== Duplicar linha (botão direito no TAB Logística) =====
+   Copia todos os campos da rota; só se escolhe o(s) transportador(es) de destino. */
+function ctxLinha(e,id){
+  if(!perms.editLog())return;
+  e.preventDefault();
+  fecharCtx();
+  const m=document.createElement("div");m.className="ctx-menu";m.id="ctx-menu";
+  m.innerHTML=`<button onclick="fecharCtx();duplicarLinha('${id}')">⧉ Duplicar para outro transportador…</button>`;
+  document.body.appendChild(m);
+  const r=m.getBoundingClientRect();
+  m.style.left=Math.max(8,Math.min(e.clientX,window.innerWidth-r.width-8))+"px";
+  m.style.top=Math.max(8,Math.min(e.clientY,window.innerHeight-r.height-8))+"px";
+  setTimeout(()=>{document.addEventListener("click",fecharCtx,{once:true});document.addEventListener("keydown",ctxEsc)},0);
+}
+function ctxEsc(e){if(e.key==="Escape")fecharCtx()}
+function fecharCtx(){const m=document.getElementById("ctx-menu");if(m)m.remove();document.removeEventListener("keydown",ctxEsc)}
+window.addEventListener("scroll",fecharCtx,true);
+function duplicarLinha(id){
+  const o=getL(id);if(!o)return;
+  const tps=state.transp.filter(t=>t.id!==o.idTransp).sort((a,b)=>a.nome.localeCompare(b.nome));
+  const preco=(o.preco===""||o.preco==null)?"—":o.preco+" "+(o.unidade||"");
+  modal(`<h3>Duplicar rota</h3>
+    <div class="info-line" style="margin-bottom:12px;line-height:1.6">
+      <b>${esc(o.servico||"(sem serviço)")}</b> · ${esc(o.categoria||"")}<br>
+      ${esc(o.carga||"—")} → ${esc(o.descarga||"—")}${o.origem?" · "+esc(o.origem):""}<br>
+      Preço: ${esc(preco)}${o.km!==""&&o.km!=null?" · "+esc(o.km)+" km":""}<br>
+      <span class="muted">Original: ${esc(o.nomeTransp||o.idTransp)}</span>
+    </div>
+    <div class="field" style="margin-bottom:14px"><label>Afetar a transportador(es) — uma rota por transportador</label>
+      <div class="ms" style="display:block">
+        <button type="button" class="ms-btn" id="nl-transp-btn" onclick="toggleNlTransp()" style="width:100%;justify-content:space-between"><span id="nl-transp-lbl">Selecionar transportador(es)…</span><span>▾</span></button>
+        <div class="ms-panel" id="nl-transp-panel" hidden style="min-width:100%;max-height:none;overflow:visible">
+          <input type="text" id="nl-transp-q" placeholder="Procurar transportador…" oninput="filterNlTransp(this.value)" style="width:100%;font-family:inherit;font-size:12.5px;padding:7px 8px;border:1px solid var(--border-2);border-radius:6px;margin-bottom:6px;background:var(--surface);color:var(--text)">
+          <div id="nl-transp-list" style="max-height:200px;overflow:auto">
+            ${tps.map(t=>`<label class="ms-opt" data-nome="${esc(((t.nome||"")+" "+(t.id||"")).toLowerCase())}"><input type="checkbox" class="nl-transp-cb" value="${esc(t.id)}" onchange="updateNlTranspLbl()"><span>${esc(t.nome)}</span></label>`).join("")||'<div class="muted" style="padding:6px">Sem outros transportadores.</div>'}
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="text-align:right;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn" onclick="confirmarDuplicar('${o.id}',false)">Guardar rascunho</button><button class="btn primary" onclick="confirmarDuplicar('${o.id}',true)">Duplicar e enviar às Compras →</button></div>`);
+  setTimeout(toggleNlTransp,30);
+}
+async function confirmarDuplicar(id,enviar){
+  const o=getL(id);if(!o)return;
+  const ids=[...document.querySelectorAll(".nl-transp-cb:checked")].map(c=>c.value);
+  if(!ids.length){toast("Escolhe pelo menos um transportador");return}
+  const orig=`duplicada de ${o.nomeTransp||o.idTransp}`;
+  for(const tid of ids){
+    const t=state.transp.find(x=>x.id===tid);
+    const l={id:uid("L"),categoria:o.categoria,idTransp:tid,nomeTransp:t?t.nome:tid,servico:o.servico,carga:o.carga,descarga:o.descarga,
+      origem:o.origem,unidade:o.unidade,preco:o.preco,km:o.km,obs:"",precisaNE:true,neNumero:"",neData:"",comprasObs:"",concluidoData:""};
+    if(enviar){l.estado="pedido";l.pedidoData=nowISO();l.historico=[{ts:nowISO(),quem:perfil,txt:`Rota ${orig} e enviada para Compras`}]}
+    else{l.estado="rascunho";l.pedidoData="";l.historico=[{ts:nowISO(),quem:perfil,txt:`Rota ${orig} (rascunho)`}]}
+    await saveLinha(l);
+  }
+  closeModal();
+  toast(`${ids.length} ${ids.length>1?"rotas duplicadas":"rota duplicada"} — ${enviar?"enviada(s) para Compras":"em rascunho"}`);
   render();
 }
 function toggleNlTransp(){

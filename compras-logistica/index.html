@@ -464,7 +464,7 @@ function getL(id){return state.linhas.find(x=>x.id===id)}
 function podeEliminar(l){return l && l.estado==="rascunho" && !l.pedidoData}
 
 /* ===== Edição com confirmação obrigatória (Logística) ===== */
-const CAMPOS_LOG={servico:"Serviço/Rota",carga:"Carga",descarga:"Descarga",origem:"Origem",unidade:"Unidade",preco:"Preço",km:"Km",precisaNE:"Precisa NE"};
+const CAMPOS_LOG={categoria:"Categoria",servico:"Serviço/Rota",carga:"Carga",descarga:"Descarga",origem:"Origem",unidade:"Unidade",preco:"Preço",km:"Km",precisaNE:"Precisa NE"};
 function stageEdit(id,campo,valor){
   pendingEdits[id]=pendingEdits[id]||{};
   pendingEdits[id][campo]=valor;
@@ -811,7 +811,7 @@ function renderLogBody(){
     const rowCls=l.estado==="alteracao_pendente"?" class=\"row-alt\"":(l.estado==="rascunho"?` class="row-rascunho${velho?" row-rascunho-old":""}" title="Rascunho há ${diasR} dia(s) — ainda não enviado às Compras"`:"");
     return `<tr id="row-${l.id}"${rowCls}${editable?` oncontextmenu="ctxLinha(event,'${l.id}')"`:""}>
       <td style="white-space:nowrap" title="${esc(dtLabel(ce))}">${ce?new Date(ce).toLocaleDateString("pt-PT"):"—"}</td>
-      <td>${esc(l.categoria)}</td>
+      <td>${editable&&l.estado==="rascunho"?`<select onchange="stageEdit('${l.id}','categoria',this.value)">${[...new Set([...catsLista(),l.categoria].filter(Boolean))].map(c=>`<option value="${esc(c)}"${l.categoria===c?" selected":""}>${esc(c)}</option>`).join("")}</select>`:esc(l.categoria)}</td>
       <td style="min-width:150px">${esc(l.nomeTransp||l.idTransp)}</td>
       <td><input ${ro} value="${esc(l.servico)}" onchange="stageEdit('${l.id}','servico',this.value)"></td>
       <td><input ${ro} value="${esc(l.carga)}" onchange="stageEdit('${l.id}','carga',this.value)"></td>
@@ -977,10 +977,10 @@ async function criarTransp(){
   await saveTransp({id,nome,nif:$("#nt-nif").value.trim(),telefone:$("#nt-tel").value.trim(),email:$("#nt-email").value.trim(),contacto:"",ativo:"Sim",obs:""});
   closeModal();toast("Transportador criado");render();
 }
+function catsLista(){return ((state.config&&state.config.tipos)||["Basculantes","MBQ|MBF|BT","T.Especial","Eco Impact"]).map(c=>c==="Agregados"?"Basculantes":c)}
 function novaLinha(){
   const tps=state.transp.slice().sort((a,b)=>a.nome.localeCompare(b.nome));
-  let cats=(state.config&&state.config.tipos)||["Basculantes","MBQ|MBF|BT","T.Especial","Eco Impact"];
-  cats=cats.map(c=>c==="Agregados"?"Basculantes":c);
+  const cats=catsLista();
   const unids=(state.config&&state.config.unidades)||["€/ton","€/m3","€/km","€/viagem","€/hora","€/serviço"];
   const ors=origensAtivas();
   modal(`<h3>Nova rota</h3>

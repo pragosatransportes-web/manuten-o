@@ -757,6 +757,18 @@ function renderLogistica(){
   makeResizable("#sec-logistica table");
 }
 function criadaEm(l){return (l.historico&&l.historico[0]&&l.historico[0].ts)||l.pedidoData||""}
+/* Origens = valores já usados nas rotas; "+ Nova origem…" pede o nome e acrescenta-o ao select (fica na lista quando a rota é gravada) */
+const OPT_NOVA_ORIGEM='<option value="__nova__">+ Nova origem…</option>';
+function origemSel(sel){
+  if(sel.value!=="__nova__")return true;
+  const nome=(prompt("Nome da nova origem / empresa:")||"").trim();
+  if(!nome){sel.value=sel.dataset.prev||"";return false}
+  const ex=[...sel.options].find(o=>o.value.toLowerCase()===nome.toLowerCase());
+  if(ex)sel.value=ex.value;
+  else{sel.insertBefore(new Option(nome,nome),sel.querySelector('option[value="__nova__"]'));sel.value=nome}
+  sel.dataset.prev=sel.value;
+  return true;
+}
 const RASCUNHO_STALE_DIAS=3; // rascunho sem enviar há >= estes dias = "antigo" (aviso vermelho)
 function diasRascunho(l){const ce=criadaEm(l);if(l.estado!=="rascunho"||!ce)return -1;return Math.floor((Date.now()-new Date(ce))/86400000)}
 function renderLogBody(){
@@ -780,7 +792,7 @@ function renderLogBody(){
       <td><input ${ro} value="${esc(l.servico)}" onchange="stageEdit('${l.id}','servico',this.value)"></td>
       <td><input ${ro} value="${esc(l.carga)}" onchange="stageEdit('${l.id}','carga',this.value)"></td>
       <td><input ${ro} value="${esc(l.descarga)}" onchange="stageEdit('${l.id}','descarga',this.value)"></td>
-      <td><select ${ro} onchange="stageEdit('${l.id}','origem',this.value)">${["",...ors].map(o=>`<option${l.origem===o?" selected":""}>${esc(o)}</option>`).join("")}</select></td>
+      <td><select ${ro} onfocus="this.dataset.prev=this.value" onchange="if(origemSel(this))stageEdit('${l.id}','origem',this.value)">${["",...ors].map(o=>`<option${l.origem===o?" selected":""}>${esc(o)}</option>`).join("")}${OPT_NOVA_ORIGEM}</select></td>
       <td><select ${ro} onchange="stageEdit('${l.id}','unidade',this.value)">${["",...unids].map(u=>`<option${l.unidade===u?" selected":""}>${esc(u)}</option>`).join("")}</select></td>
       <td class="num"><input ${ro} type="number" step="0.01" value="${l.preco}" onchange="stageEdit('${l.id}','preco',this.value)"></td>
       <td class="num"><input ${ro} type="number" step="0.1" value="${l.km}" onchange="stageEdit('${l.id}','km',this.value)"></td>
@@ -963,7 +975,7 @@ function novaLinha(){
     <div class="field" style="margin-bottom:8px"><label>Serviço / Rota</label><input id="nl-serv"></div>
     <div class="grid-2" style="margin-bottom:8px"><div class="field"><label>Local de carga</label><input id="nl-carga"></div><div class="field"><label>Local de descarga</label><input id="nl-desc"></div></div>
     <div class="grid-3" style="margin-bottom:8px">
-      <div class="field"><label>Origem</label><select id="nl-origem"><option value=""></option>${ors.map(o=>`<option>${esc(o)}</option>`).join("")}</select></div>
+      <div class="field"><label>Origem</label><select id="nl-origem" onfocus="this.dataset.prev=this.value" onchange="origemSel(this)"><option value=""></option>${ors.map(o=>`<option>${esc(o)}</option>`).join("")}${OPT_NOVA_ORIGEM}</select></div>
       <div class="field"><label>Unidade</label><select id="nl-unid">${unids.map(u=>`<option>${esc(u)}</option>`).join("")}</select></div>
       <div class="field"><label>Preço</label><input id="nl-preco" type="number" step="0.01"></div>
     </div>

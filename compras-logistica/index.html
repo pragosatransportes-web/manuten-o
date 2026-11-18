@@ -1151,7 +1151,7 @@ function renderMensagens(){
 }
 
 /* ===== Modal ===== */
-function modal(html){$("#modalRoot").innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`}
+function modal(html){$("#modalRoot").innerHTML=`<div class="modal-bg" onmousedown="this._down=(event.target===this)" onclick="if(event.target===this&&this._down)closeModal();this._down=false"><div class="modal">${html}</div></div>`}
 function closeModal(){$("#modalRoot").innerHTML="";currentConvLine=null}
 
 init();

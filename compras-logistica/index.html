@@ -352,10 +352,20 @@ async function startApp(){
   render();
 }
 function tentarLigar(){window._lastErr="";setSync("A ligar…","syncing");startApp()}
+/* O Supabase devolve no máximo 1000 linhas por pedido: ler por páginas. */
+async function selectAll(tabela,ordem,cols){
+  const PAG=1000;let out=[];
+  for(let de=0;;de+=PAG){
+    const r=await sb.from(tabela).select(cols||"*").order(ordem).range(de,de+PAG-1);
+    if(r.error)return {data:null,error:r.error};
+    out=out.concat(r.data||[]);
+    if(!r.data||r.data.length<PAG)return {data:out,error:null};
+  }
+}
 async function loadRemote(){
   const [tr,lr]=await Promise.all([
-    sb.from("cl_transportadores").select("*").order("nome"),
-    sb.from("cl_linhas").select("*")
+    selectAll("cl_transportadores","nome"),
+    selectAll("cl_linhas","id")
   ]);
   if(tr.error||lr.error){throw (tr.error||lr.error)}
   state.transp=(tr.data||[]).map(tFromDb);
@@ -369,7 +379,7 @@ async function loadRemote(){
 }
 async function loadMensagens(){
   try{
-    const r=await sb.from("cl_mensagens").select("*");
+    const r=await selectAll("cl_mensagens","id");
     if(r.error){console.warn("cl_mensagens indisponível (falta migração?)",r.error.message);state.mensagens=[];return}
     state.mensagens=(r.data||[]).map(mFromDb);
   }catch(e){console.warn("cl_mensagens erro",e);state.mensagens=[]}

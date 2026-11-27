@@ -1018,9 +1018,14 @@ function novaLinha(){
     <div class="field" style="margin-bottom:14px"><label>Km</label><input id="nl-km" type="number" step="0.1" style="max-width:120px"></div>
     <div style="text-align:right;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn" onclick="criarLinhas(false)">Guardar rascunho</button><button class="btn primary" onclick="criarLinhas(true)">Criar e enviar às Compras →</button></div>`);
 }
+/* Evita gravar duas vezes com duplo clique: bloqueia os botões do modal enquanto grava. */
+let _aGravar=false;
+function bloquearModal(on){_aGravar=on;document.querySelectorAll("#modalRoot button").forEach(b=>b.disabled=on)}
 async function criarLinhas(enviar){
+  if(_aGravar)return;
   const ids=[...document.querySelectorAll(".nl-transp-cb:checked")].map(c=>c.value);
   if(!ids.length){toast("Escolhe pelo menos um transportador");return}
+  bloquearModal(true);try{
   const cat=$("#nl-cat").value,serv=$("#nl-serv").value.trim(),carga=$("#nl-carga").value.trim(),
     desc=$("#nl-desc").value.trim(),origem=$("#nl-origem").value,unid=$("#nl-unid").value,
     preco=$("#nl-preco").value,km=$("#nl-km").value;
@@ -1032,6 +1037,7 @@ async function criarLinhas(enviar){
     else{l.estado="rascunho";l.pedidoData="";l.historico=[{ts:nowISO(),quem:perfil,txt:"Rota criada (rascunho)"}]}
     await saveLinha(l);
   }
+  }finally{bloquearModal(false)}
   closeModal();
   toast(`${ids.length} ${ids.length>1?"rotas":"rota"} ${enviar?"enviada(s) para Compras":"gravada(s) em rascunho"}`);
   render();
@@ -1090,9 +1096,11 @@ function duplicarLinha(id){
   setTimeout(toggleNlTransp,30);
 }
 async function confirmarDuplicar(id,enviar){
+  if(_aGravar)return;
   const o=getL(id);if(!o)return;
   const ids=[...document.querySelectorAll(".nl-transp-cb:checked")].map(c=>c.value);
   if(!ids.length){toast("Escolhe pelo menos um transportador");return}
+  bloquearModal(true);try{
   const orig=`duplicada de ${o.nomeTransp||o.idTransp}`;
   for(const tid of ids){
     const t=state.transp.find(x=>x.id===tid);
@@ -1102,6 +1110,7 @@ async function confirmarDuplicar(id,enviar){
     else{l.estado="rascunho";l.pedidoData="";l.historico=[{ts:nowISO(),quem:perfil,txt:`Rota ${orig} (rascunho)`}]}
     await saveLinha(l);
   }
+  }finally{bloquearModal(false)}
   closeModal();
   toast(`${ids.length} ${ids.length>1?"rotas duplicadas":"rota duplicada"} — ${enviar?"enviada(s) para Compras":"em rascunho"}`);
   render();
